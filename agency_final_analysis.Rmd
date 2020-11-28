@@ -28,7 +28,7 @@ library(rstatix)
 library(ggpubr)
 library(lme4)
 library(lmerTest)
-library(MASS) #masks dplyr::select from rstatix and dplyr...so specify using dplyr::select
+library(MASS) #for regression. #masks select from rstatix and dplyr...so specify using dplyr::select
 library(hablar) #you need this for batch-converting to numeric
 
 dat <- read_csv("agendata.csv")
@@ -266,6 +266,7 @@ d %>%
   )
 
 # barplot of Actual behavior across condition - primary result
+
 d %>%
   filter(Kind == "actual") %>%
   ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
@@ -314,6 +315,13 @@ dat %>%
 # Check for Homogeneity of Covariances of between-subject factor (condition)
 box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
 
+
+datlong <- dat %>%
+  pivot_wider(names_from = Sabotage, values_from = Behaviors)
+
+write.csv(datlong,"/Users/JosephOuta/Desktop/datlong.csv", row.names = FALSE)
+
+
 ```
 
 # Confirmatory Analyses
@@ -322,6 +330,7 @@ box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 w
 
 
 ```{r}
+
 res.aov <- anova_test(
   data = dat, dv = Behaviors, wid = ResponseId,
   between = condition, within = Sabotage
@@ -362,7 +371,25 @@ dat %>%
 
 #NB: two way mixed ANOVA ha 3 null hypotheses - no difference in btn group variable, no difference in within grp variable, and no interaction effect
 
+
+###==============REDO THIS ANOVA ON SPSS======================##
+
+
+
+#The anova I just ran doesnt count because I my IVs were condition and sabotage but I ignored Kind. 
 ```
+
+Redo but subset Kind == actual
+
+```{r}
+
+dat2 <- dat %>%
+  filter(Kind=="actual")
+
+
+
+```
+
 
 (pls dont delete me) Visualizations of the statistical tests
 
@@ -472,14 +499,13 @@ summary(fit.fixed)
 
 
 
-lapply(dat_filt_log[, c("Behaviors", "condition", "Kind", "Sabotage")], table)
-
-d <- dplyr::select(dat_filt_log, -Kind)
+testInheritedMethods() <- dplyr::select(dat_filt_log, -Kind)
 
 #================ Tutorial source: https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/ ===========#
 
 datr <- dat %>%
     mutate_at(vars(Behaviors), factor) 
+  
 
 ## Descriptive stats
 
@@ -498,14 +524,6 @@ summary(m) #we have 5 intercepts corresponding to the 5 DV categories, but we ar
 
 # logit (P(y<1) = -0.8 -)
 
-dat
-
-str(dat)
-```
-
-
-```{r}
-
 ## store table
 (ctable <- coef(summary(m)))
 
@@ -513,7 +531,6 @@ p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
 
 ## combined table
 (ctable <- cbind(ctable, "p value" = p))
-
 
 ## odds ratios
 exp(coef(m))
@@ -525,6 +542,33 @@ exp(cbind(OR = coef(m)))
 ## pared  2.8511 1.6958  4.817
 ## public 0.9429 0.5209  1.681
 ## gpa    1.8514 1.1136  3.098
+exp(cbind(OR = coef(m), confint(m)))
+
+
+pred <- predict(m, datr[1:5,], type = 'prob')
+print(pred, digits = 3)
+
+#condition and sabotage 1-2 are statistically significant. 1 to 3 are not. 
+
+
+##NULL HYPOTHESIS: NO signficant differene bewteen baseline model and final model
+
+#How much variance in predictor explains variance in dependent variable
+datr2 <- datr %>%
+  filter(Kind == "actual")
+
+write.csv(datr2,"/Users/JosephOuta/Desktop/datr2.csv", row.names = FALSE)
+
+write.csv(datr,"/Users/JosephOuta/Desktop/datrorig.csv", row.names = FALSE)
+
+
+
+```
+
+
+```{r}
+
+
 
 d$condition <- as.factor(d$condition)
 
