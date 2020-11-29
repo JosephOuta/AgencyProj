@@ -31,6 +31,8 @@ library(lmerTest)
 library(MASS) #for regression. #masks select from rstatix and dplyr...so specify using dplyr::select
 library(hablar) #you need this for batch-converting to numeric
 
+library(ordinal) #for clmm regression
+
 dat <- read_csv("agendata.csv")
 
 dat <- rename(dat, AttnCheck = "Debrief+attend") 
@@ -42,7 +44,7 @@ filter(dat, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #
 
 ```{r cleaning and wrangling}
 dat <- dat %>%
-  slice(3:length(dat$ResponseId)) %>% #remove first 2 rows with title info
+  dplyr::slice(3:length(dat$ResponseId)) %>% #remove first 2 rows with title info
   filter(Status==0) %>% #Remove Survey Preview rows
   arrange(Agency2) %>% #Arrange data by condition
   rename(ECNA = "Q51") %>%
@@ -319,8 +321,6 @@ box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 w
 datlong <- dat %>%
   pivot_wider(names_from = Sabotage, values_from = Behaviors)
 
-write.csv(datlong,"/Users/JosephOuta/Desktop/datlong.csv", row.names = FALSE)
-
 
 ```
 
@@ -379,115 +379,6 @@ dat %>%
 #The anova I just ran doesnt count because I my IVs were condition and sabotage but I ignored Kind. 
 ```
 
-Redo but subset Kind == actual
-
-```{r}
-
-dat2 <- dat %>%
-  filter(Kind=="actual")
-
-
-
-```
-
-
-(pls dont delete me) Visualizations of the statistical tests
-
-```{r pls dont delete me}
-# Boxplot 1
-# Visualization: boxplots with p-values
-pwc <- pwc %>% add_xy_position(x = "Sabotage")
-pwc.filtered <- pwc %>% filter(Sabotage != "sab2", Sabotage != "sab3")
-bxp_report <- bxp + 
-  stat_pvalue_manual(pwc.filtered, tip.length = 0, hide.ns = TRUE) +
-  labs(
-    subtitle = get_test_label(res.aov, detailed = TRUE),
-    caption = get_pwc_label(pwc)
-  )
-bxp_report  # hmmm
-
-
-# Boxplot 22
-
-#reshaping
-bxp2 <- ggplot(dat,  # look weird because data isn't normally distributed
-       aes(x = Sabotage, y = Behaviors,  color = condition)) +
-  geom_boxplot()
-
-bxp_report_2 <- bxp2 + 
-  stat_pvalue_manual(pwc.filtered, tip.length = 0, hide.ns = TRUE) +
-  labs(
-    subtitle = get_test_label(res.aov, detailed = TRUE),
-    caption = get_pwc_label(pwc)
-  )
-bxp_report_2
-
-```
-
-## Linear mixed effects regression
-
-```{r linear model}
-# First just run linear model no mixed effects
-
-dat_filt
-
-lm_test <- lm(Behaviors ~ Sabotage, data = dat_filt)
-summary(lm_test)
-
-#plot 2
-anova(lm(Behaviors ~ Sabotage, data = dat_filt))
-
-
-
-# tutorial used: https://stat.ethz.ch/~meier/teaching/anova/random-and-mixed-effects-models.html#mixed-effects-models
-
-mixed = lmer(Behaviors ~ Sabotage + (1 | condition), data = dat_filt)
-summary(mixed)
-
-## BIG ISSUE: I DONT KNOW HOW TO TELL WHICH IS FIXED EFFECTS AND WHICH ARE RANDOM EFFECTS
-
-# we want a model that has a random effect per condition, and a random effect per combination of condition and Sabotage
-
-options(contrasts = c("contr.treatment", "contr.poly"))
-
-fit <- lmer(Behaviors ~ Sabotage + (1 | condition) + (1 | condition:Sabotage), data = dat_filt)
-anova(fit) # Shows that the fixed effect of Sabotage is not significant. Fixed effect means the average Sabotage effect, where the average is taken over the two conditions. We know that every condition has its random deviation of this effect. Hence, the relevant question is whether the conditions just fluctuate around a constant Sabotage effect or whether the Sabotage effect is is substantially larger than this condition-specific Sabotage variation. Hence, this boils down to comparing the variation between different Sabotages (having 2 degrees of freedom) to the variation due to interaction between Sabotages and conditions (having 2 degrees of freedom (?))
-
-#### Question: How to know whether my random effects (condition) are significant?
-
-fit2 <- lmer(Behaviors ~ condition + Sabotage + (1 | ResponseId), data = dat_filt)
-anova(fit2)
-
-summary(fit2)
-
-
-# for approximate confidence intervals
-confint(fit, oldNames = FALSE)
-
-## For residual analysis: Tukey-Anscombe plot:
-plot(fit)
-
-##QQ-plots
-par(mfrow = c(1, 3))
-qqnorm(ranef(fit)$condition[, 1], main = "Random effects of condition")
-qqnorm(ranef(fit)$'condition:Sabotage'[, 1], main = "Random interaction")
-qqnorm(resid(fit), main = "Residuals")
-
-
-# Treating both as fixed effects
-fit.fixed <- aov(Behaviors ~ Sabotage * condition, data = dat_filt)
-summary(fit.fixed)
-
-# effect of condition is much more significant
-
-
-##MORE NOTES
-
-
-# we assume there is a condition-level effect, but each sabotage is allowed to have its own random variation (?) hence Sabotage is random effects and Condition is fixed effects --- but not sure
-
-```
-
 ## Ordinal Logistic Regression
 
 ```{r}
@@ -497,9 +388,6 @@ summary(fit.fixed)
 # 5 categories in DV
 # 2 discrete predictors: condition and Sabotage
 
-
-
-testInheritedMethods() <- dplyr::select(dat_filt_log, -Kind)
 
 #================ Tutorial source: https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/ ===========#
 
@@ -557,20 +445,126 @@ print(pred, digits = 3)
 datr2 <- datr %>%
   filter(Kind == "actual")
 
-write.csv(datr2,"/Users/JosephOuta/Desktop/datr2.csv", row.names = FALSE)
 
-write.csv(datr,"/Users/JosephOuta/Desktop/datrorig.csv", row.names = FALSE)
+
+
+```
+
+# test
+```{r}
+
+get_anova_table(res.aov)
+
+datlin <- dat %>%
+  mutate_at(vars(ResponseId), factor) 
+
+  mutate_at(vars(Behaviors), numeric)
+
+
+linear <- lmer(Behaviors~condition + Sabotage + condition*Sabotage + (1|ResponseId), data = datlin)
+anova(linear)
+
+datlogistic <- datlin %>%
+    mutate_at(vars(Behaviors), factor)
+#tutorials: https://stackoverflow.com/questions/49103318/anova-function-when-comparing-logistic-models-has-no-p-value-for-deviance
+#tutorial2: https://stats.stackexchange.com/questions/59879/logistic-regression-anova-chi-square-test-vs-significance-of-coefficients-ano
+
+
+#1 - Main effect of condition
+logistic0 <- clmm(Behaviors~ 1 + (1|ResponseId), data = datlogistic, link = "logit")
+summary(logistic0)
+
+logistic1 <- clmm(Behaviors~ condition + (1|ResponseId), data = datlogistic, link = "logit")
+summary(logistic1)
+
+anova(logistic0, logistic1) #'test' argument ignored in anova.clm
+
+
+#2 - Main effect of Sabotage
+logistic2 <- clmm(Behaviors~ Sabotage + (1|ResponseId), data = datlogistic, link = "logit")
+summary(logistic2)
+
+anova(logistic1, logistic2)
+
+#3 - interaction effect
+logistic3 <- clmm(Behaviors~ condition*Sabotage + (1|ResponseId), data = datlogistic, link = "logit")
+summary(logistic3)
+
+anova(logistic1, logistic2, logistic3)
+
+# Now that you have simple main effects, time to do multiple comparisons post hoc
+
+# tutorial1: https://stats.stackexchange.com/questions/60352/comparing-levels-of-factors-after-a-glm-in-r
+#tutorial 2: https://stats.idre.ucla.edu/r/faq/how-can-i-test-contrasts-in-r/
+
+
+##FINALLY I CAN SAY MY REGRESSION AND MY ANOVA AGREE RESULTS-WISE. PERRFECTT. THE FIGURES AREN"T EXACT BUT THE GENERAL SENTIMENT IS THE SAME. 
+#NEXT UP< CLEAN CODE AND RE-PERFORM ANOVA ON "ACTUAL"-FILTERED DATA
+```
+
+# OLS PART 2
+
+```{r}
+#I"VE FIGURED IT OUT!!
+#SOURCE: https://marissabarlaz.github.io/portfolio/ols/
+
+# OLS IS a type of CLM model - cumulative link model. YOu can either use MASS package for polr() or clm() and clmm() in ordinal package. clmm() is for mixed effects so thats probabyl what i'm going for.
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+dattest2 %>%
+ggplot(aes(x=interaction(condition, Sabotage), fill = Behaviors)) +
+  geom_bar(position = "fill") + scale_fill_manual(values = cbPalette) + theme_minimal()
+
+str(dat)
+
+
+
+library(ordinal)
+
+
+ols1 = clmm(Behaviors ~ condition + Sabotage + condition*Sabotage + (1|ResponseId) + (1|Sabotage), data = dattest2, link = "logit")
+summary(ols1)
+
+dattest3 <- dattest2 %>%
+    mutate_at(vars(ResponseId), factor) 
+
+anova(ols1, test = 'Chisq')
+
+## ALSO GO BACK AND REMOVE EXTREME OUTLIERS THEN RERUN ANOVA
+
+
+#Mad advice here: https://stats.stackexchange.com/questions/28938/why-do-linear-regression-and-anova-give-different-p-value-in-case-of-consideri. Do 2 models, one with and one without predictor then compare in anova() 
+
+model12 = clmm(Behaviors ~ 1 + condition + Sabotage + condition*Sabotage + (1|ResponseId), data = dattest2, link = "logit")
+summary(model12)
+
+anova(model1, type = 3)
+
+
+model2 = clmm(Behaviors ~ condition + (1|ResponseId), data = dattest3, link = "logit")
+summary(model2)
+
+
+anova(model1, model2)
+
+options(contrasts=c("contr.sum","contr.poly"))
+moD2 <- clmm(Behaviors ~ condition + Sabotage + condition*Sabotage + (1|ResponseId), data = dattest3, link = "logit")
+summary(moD2)
+anova(moD2)
+
 
 
 
 ```
 
 
+ More logistic code
+ 
 ```{r}
 
 
 
-d$condition <- as.factor(d$condition)
 
 
 logistic <- glm(Behaviors ~ condition, data = d, family = "binomial")
@@ -587,8 +581,7 @@ ll.proposed <- logistic2$deviance/-2
 str(d)
 
 
-
-####### SOMETHNING"S UP>>>DATA SEEMS TOO LONG>>>REDUCE IT IF I CAN
+####### SOMETHNING seems UP>>>DATA SEEMS TOO LONG>>>REDUCE IT IF I CAN
 ```
 
 videos to watch
