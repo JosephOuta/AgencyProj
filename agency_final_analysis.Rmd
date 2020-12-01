@@ -6,14 +6,19 @@ output: html_document
 ---
 
 # Table of Contents
-[Data preparation](#data-preparation)
-[Data wrangling](#data-wrangling)
-[Agency exclusions](#agency-exclusions)
-[Non-Agency exclusions](#nonagency-exclusions)
-[Exploratory analyses](#exploratory-analyses)
-[Assumptions tests](#assumptions-of-anova)
-[Confirmatory analysis - Two Way ANOVA](#confirmatory-analyses)
-[Confirmatory analysis - Ordinal Logistic Regression](#ordinal-logistic-regression)
+- [Data preparation](#data-preparation)  
+- [Data wrangling](#data-wrangling)  
+- [Agency exclusions](#agency-exclusions)  
+- [Non-Agency exclusions](#nonagency-exclusions)  
+Primary Analysis:  
+- [Exploratory analyses](#exploratory-analyses-1)  
+- [Confirmatory analysis - Two Way ANOVA](#two-way-mixed-effects-anova)  
+- [Confirmatory analysis - Ordinal Logistic Regression](#ordinal-logistic-regression)   
+Secondary Analysis:   
+- [Exploratory analyses](#exploratory-analyses-2)  
+- [Confirmatory analysis - Three Way ANOVA](#three-way-mixed-effects-anova)  
+- [Confirmatory analysis - Ordinal Logistic Regression](#ordinal-logistic-regression-2)
+
 
 # Data Preparation
 
@@ -30,21 +35,21 @@ library(lme4)
 library(lmerTest)
 library(MASS) #for regression. #masks select from rstatix and dplyr...so specify using dplyr::select
 library(hablar) #you need this for batch-converting to numeric
-
+library(dae)
 library(ordinal) #for clmm regression
 
-dat <- read_csv("agendata.csv")
+d <- read_csv("agendata.csv")
 
-dat <- rename(dat, AttnCheck = "Debrief+attend") 
-filter(dat, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
+d <- rename(d, AttnCheck = "Debrief+attend") 
+filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
 
 ```
 
 # Data Wrangling
 
 ```{r cleaning and wrangling}
-dat <- dat %>%
-  dplyr::slice(3:length(dat$ResponseId)) %>% #remove first 2 rows with title info
+d <- d %>%
+  dplyr::slice(3:length(d$ResponseId)) %>% #remove first 2 rows with title info
   filter(Status==0) %>% #Remove Survey Preview rows
   arrange(Agency2) %>% #Arrange data by condition
   rename(ECNA = "Q51") %>%
@@ -98,7 +103,7 @@ Attention Exclusions
 Excluding based on failed attention responses in Agency condition manipulation check (57 exclusions)
 
 ```{r}
-dat <- dat %>%
+d <- d %>%
   filter( # Exclusion 2: exclude failed condition 1 Attention Check
        !grepl("5", Agency2),
        # CODER 1 - JOSEPH OUTA
@@ -166,7 +171,7 @@ Excluding based on failed responses in Non-Agency condition manipulation check (
 
 ```{r}
 
-dat <- dat %>%
+d <- d %>%
   filter(# CODER 1 - JOSEPH OUTA
          !grepl("By keeping a good relationship with the customer- honesty and respect.", NonA2), #page 1
          !grepl("Company decisions are basically based in how they treat their cliental.", NonA2),
@@ -209,17 +214,21 @@ dat <- dat %>%
 
 ```
 
-# Exploratory Analyses
+# Primary Hypothesis 
+
+Will increasing agency lead to less retaliatory customer sabotage?
+
+## Exploratory Analyses 1
 
 ```{r}
 
 # histogram of one of the factors
-dat %>%
-  ggplot(aes(x = deserve.sab1)) +
+d %>%
+  ggplot(aes(x = actual.sab1)) +
   geom_bar(width = 0.75) +
-  scale_x_continuous(breaks = seq (from = 0, to = 5, by = 1))
+  scale_x_continuous(breaks = seq (from = 0, to = 5, by = 1)) 
 
-dat <- dat %>%
+dat <- d %>%
   dplyr::select(ResponseId, condition,
          deserve.sab1, deserve.sab2, deserve.sab3,
          actual.sab1, actual.sab2, actual.sab3) %>%
@@ -231,12 +240,14 @@ dat <- dat %>%
 
 # boxplot of unethical behaviors across all 3 IVs
 dat %>% 
+  filter(Kind == "actual") %>%
   ggplot(aes(x = condition, y = Behaviors,  color = Sabotage)) +
   geom_boxplot() #looks left skewed, makes sense since DV is Likert-type/ ordinal
 
 # boxplot but binned by within-participant variable Sabotage
 dat %>%
-   ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
+  filter(Kind == "actual") %>%
+  ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
   geom_boxplot()
 
 #interaction plot
@@ -248,13 +259,196 @@ dat %>%
 std <- function(x) sd(x)/sqrt(length(x))
 dodge <- position_dodge(width = 0.9)
 
-d <- dat %>% 
+dd <- dat %>% 
   group_by(condition, Kind, Sabotage) %>%
   summarize(Mean = mean(Behaviors), 
             SE = std(Behaviors)) 
 
+# barplot of mean actual behaviors across condition 
+dd %>%
+  filter(Kind == "actual") %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2)
+
+# point-plot of summary statistics
+dd %>% 
+  filter(Kind == "actual") %>%
+  ggplot(aes(x = condition, y = Mean, group = Sabotage, color = Sabotage)) + 
+  geom_point() + geom_line() #stat_summary(geom = "line")
+
+# point plot but binned by within-participant variable Sabotage
+dd %>%
+  filter(Kind == "actual") %>%
+  ggplot(aes(x = Sabotage, y = Mean, group = condition, col = condition)) + 
+  geom_point() + geom_line()
+
+```
+
+## Confirmatory Analyses 1
+
+ANOVA and Ordinal Logistic Regression
+
+### Assumptions of ANOVA
+
+Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
+
+```{r}
+# Outlier check
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(condition, Sabotage) %>%
+  identify_outliers(Behaviors) # Violated. 9 outliers, 2 of them are extreme
+
+# Normality Check 1: Shapiro-Wilk test
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(condition, Sabotage) %>% # if Normal, p-values are greater than 0.05
+  shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
+
+# Normality Check 2: QQ-Plots (for sample sizes > 50)
+dat %>%
+  filter(Kind == "actual") %>%
+  ggqqplot("Behaviors", ggtheme = theme_bw()) +
+  facet_grid(condition ~ Sabotage) # Violated. Highly non-normal behavior - should be linear
+
+# Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(Sabotage) %>%
+  levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All have similar variance
+
+# Check for Homogeneity of Covariances of between-subject factor (condition)
+box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
+
+```
+
+
+### Two-way Mixed Effects Anova 
+
+Since normality appears to be violated, we will conduct a two-way ANOVA anyway, then we will also conduct an ordinal logistic regression to see if results hold. Moreover, linear tests aren't as sensitive to  normality assumptions as they are to homogeneity of variance assumptions. Since the data passed the homogeneity test, it makes sense to proceed with both an ANOVA and a regression.
+
+Our two way mixed ANOVA has 3 null hypotheses:
+- No difference in between-group variable (condition)
+- No difference in within group variable (Sabotage)
+- No interaction effect (condition:Sabotage)
+
+```{r}
+dat2 <- dat %>%
+  filter(Kind == "actual")
+
+dat2.anova <- anova_test(
+  data = dat2, dv = Behaviors, wid = ResponseId,
+  between = condition, within = Sabotage
+  )
+get_anova_table(dat2.anova) # There was a statistically significant main effect of condition F(1, 146) = 0.032, main effect of Sabotage on unethical behaviors F(2, 277) = 7.93, p = 0.0004, and main interaction effect F(2, 277) = 0.015. generalized effect sizes were low
+
+#============ Post-Hoc Tests =============== ##
+
+# Simple Main Effect of Condition at each Sabotage level
+## Effect of condition at each sabotage
+dat2 %>%
+  group_by(Sabotage) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, between = condition) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, the simple main effect of condition was significant at sab1 (p = 0.006) but not at sab2 (p = 0.88) and sab3 (p = 0.61).
+
+## Pairwise comparisons between conditions
+dat2 %>%
+  group_by(Sabotage) %>%
+  pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison at Sabotage 1(p = 0.00199); but not in condition 1 vs condition 2 at Sab 2 (p = 0.296) and at Sab 3 (p = 0.203).
+
+### Simple Main effects of Sabotage variable 
+# Effect of Sabotage at each level of condition
+dat2 %>%
+  group_by(condition) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, within = Sabotage) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of Sabotage on mean Behaviors for condition 1 (p = 0.008) but not for condition 2 (p = 0.384). 
+
+# Pairwise comparisons between condition at each Sabotage levels - Paired t-test is used because we have repeated measures by Sabotage
+dat2 %>%
+  group_by(condition) %>%
+  pairwise_t_test(
+    Behaviors ~ Sabotage, paired = TRUE, 
+    p.adjust.method = "bonferroni"
+    ) %>%
+  dplyr::select(-df, -statistic, -p) ## Using pairwise paired t-test comparisons, it can be seen that for condition 1, the mean Behaviors were statistically significantly different between Sabotage 1 and 2(p = 0.005) but not for the rest of the Sabotage pairs. For condition 2 the means were not significantly different for any of the Sabotage pairs
+
+```
+
+### Ordinal Logistic Regression 1
+
+To preview the results of this OLR, significant results under the OLR generally match up with the ANOVA findings. Main effect of condition, Sabotage and interaction are all significant, though p-values for condition and Sabotage are less extreme under the OLR analysis, whereas the p-value for interaction effect is more extreme under the OLR.
+
+```{r}
+dat3 <- dat2 %>%
+    mutate_at(vars(Behaviors), factor)
+
+#1 - Main effect of condition
+mod1 <- clmm(Behaviors ~ 1 + (1|ResponseId), data = dat3, link = "logit") #mixed cumulative link model
+mod2 <- clmm(Behaviors ~ condition + (1|ResponseId), data = dat3, link = "logit")
+anova(mod1, mod2) #main effect of condition p = 0.047
+
+#2 - Main effect of Sabotage
+mod3 <- clmm(Behaviors ~ Sabotage + (1|ResponseId), data = dat3, link = "logit")
+anova(mod1, mod3) #p = 0.0058
+
+#3 - interaction effect
+mod4 <- clmm(Behaviors ~ condition*Sabotage + (1|ResponseId), data = dat3, link = "logit")
+anova(mod1, mod4) #p = 0.001
+
+# Linear mixed effects regression
+lin <- lmer(Behaviors~condition + Sabotage + condition*Sabotage + (1|ResponseId), data = dat2)
+anova(lin) #just to confirm ANOVA results = similar findings
+
+```
+
+# Secondary Findings 
+
+The primary analysis considered only actual behaviors across condition and sabotage levels. This secondary analysis, on the other hand, will be more comprehensive, considering both actual and deserve behaviors across condition and sabotage levels.
+
+## Exploratory Analyses 2
+
+```{r}
+# boxplot of unethical behaviors across all 3 IVs
+dat %>% 
+  ggplot(aes(x = condition, y = Behaviors,  color = Sabotage)) +
+  geom_boxplot() + 
+  facet_wrap(~Kind)
+
+# boxplot but binned by within-participant variable Sabotage
+dat %>%
+   ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
+  geom_boxplot() +
+  facet_wrap(~Kind)
+
+#interaction plot
+dat %>%
+interaction.ABC.plot(x.factor = condition, groups.factor = Sabotage, trace.factor = Kind, 
+                        response = Behaviors)
+
+dd2 <- dat %>% 
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) 
+
+# point-plot with error-bars 
+dd2 %>% 
+  ggplot(aes(x = condition, y = Mean, group = Sabotage, color = Sabotage)) + 
+  geom_point() +
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~Kind) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), 
+                width=0.2,
+                position = position_dodge(0.01)) 
+
+std <- function(x) sd(x)/sqrt(length(x))
+dodge <- position_dodge(width = 0.9)
+
+
 # barplot of mean unethical behaviors across condition, kind and sabotage
-d %>%
+dd2 %>%
   ggplot(aes(x = interaction(Kind, condition), y = Mean, fill=Sabotage)) +
   geom_bar(position=position_dodge(), stat = "identity") +
   geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE), position = dodge, width = 0.2) +
@@ -267,41 +461,23 @@ d %>%
         text=element_text(size=12,  family="sans")
   )
 
-# barplot of Actual behavior across condition - primary result
-
-d %>%
-  filter(Kind == "actual") %>%
-  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
-  geom_bar(stat="identity", position=position_dodge()) +
-  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2)
-
-# point-plot of summary statistics
-d %>% 
-  filter(Kind == "actual") %>%
-  ggplot(aes(x = condition, y = Mean, group = Sabotage, color = Sabotage)) + 
-  geom_point() + geom_line() #stat_summary(geom = "line")
-
-# point plot but binned by within-participant variable Sabotage
-d %>%
-  filter(Kind == "actual") %>%
-  ggplot(aes(x = Sabotage, y = Mean, group = condition, col = condition)) + 
-  geom_point() + geom_line()
-
 ```
 
-# Assumptions of ANOVA
+## Confirmatory Analyses 2
+
+### Assumptions of ANOVA
 
 Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
 
 ```{r}
 # Outlier check
 dat %>%
-  group_by(condition, Sabotage) %>%
+  group_by(condition, Kind, Sabotage) %>%
   identify_outliers(Behaviors) # Violated. 9 outliers, two of which are extreme
 
 # Normality Check 1: Shapiro-Wilk test
 dat %>%
-  group_by(condition, Sabotage) %>% # if Normal, p-values are greater than 0.05
+  group_by(condition, Kind, Sabotage) %>% # if Normal, p-values are greater than 0.05
   shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
 
 # Normality Check 2: QQ-Plots (for sample sizes > 50)
@@ -311,325 +487,83 @@ dat %>%
 
 # Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
 dat %>%
-  group_by(Sabotage) %>%
+  group_by(Kind, Sabotage) %>%
   levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All groups have similar variance
 
 # Check for Homogeneity of Covariances of between-subject factor (condition)
 box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
 
-
-datlong <- dat %>%
-  pivot_wider(names_from = Sabotage, values_from = Behaviors)
-
-
 ```
 
-# Confirmatory Analyses
-
-## Two-way Mixed Effects Anova
-
+### Three-way Mixed Effects Anova
 
 ```{r}
 
-res.aov <- anova_test(
+three.way <- anova_test(
   data = dat, dv = Behaviors, wid = ResponseId,
-  between = condition, within = Sabotage
+  between = condition, within = c(Kind, Sabotage)
   )
-get_anova_table(res.aov) # There was a statistically significant main effect of Sabotage on unethical behaviors F(2, 588) = 7.93, p = 0.0004, effect size of 0.006 (essentially no effect). Effect of condition was non-significant (p = 0.1) and interaction effect was non-significant as well (p = 0.1). Gen effect size was 0.006 (very low). 
+get_anova_table(three.way) # There was a statistically significant main effect of Kind and main effect of Sabotage, and interaction effect of Kind and Sabotage. main effect of condition was non-significant.
 
 #============ Post-Hoc Tests =============== ##
 
-# Simple Main Effect of Condition at each Sabotage level
-## Effect of condition at each sabotage
+# Simple Main Effect of Condition at each Kind and Sabotage level
+## Effect of condition at each sabotage and kind level
 dat %>%
-  group_by(Sabotage) %>%
+  group_by(Kind, Sabotage) %>%
   anova_test(dv = Behaviors, wid = ResponseId, between = condition) %>%
   get_anova_table() %>%
-  adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, it can be seen that the simple main effect of condition was significant at sab1 (p = 0.042) but not at sab2 (p = 1) and sab3 (p = 0.9).
+  adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, it can be seen that the simple main effect of condition was only significant for sab1 in actual factor (p = 0.012)
 
-## Pairwise comparisons between conditions
+## Pairwise comparisons between condition and kind
 dat %>%
-  group_by(Sabotage) %>%
-  pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison at Sabotage 1(p = 0.0137); but not in condition 1 vs condition 2 at Sab 2 (p = 0.408) and at Sab 3 (p = 0.314).
+  group_by(Kind, Sabotage) %>%
+  pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Similarly, pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison only at Sabotage 1(p = 0.00199).
 
 ### Simple Main effects of Sabotage variable 
-# Effect of Sabotage at each level of condition
+# Effect of Sabotage at each level of each factor
 dat %>%
-  group_by(condition) %>%
+  group_by(Kind, condition) %>%
   anova_test(dv = Behaviors, wid = ResponseId, within = Sabotage) %>%
   get_anova_table() %>%
-  adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of Sabotage on mean Behaviors for both conditions, condition 1 (p = 0.018) and condition 2 (p = 0.03). 
+  adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of Sabotage on mean Behaviors for actual factor in condition 1 (p = 0.016)
 
-# Pairwise comparisons between condition at each Sabotage levels - Paired t-test is used because we have repeated measures by Sabotage
+# Pairwise comparisons between condition at each Kind and sabotage levels 
 dat %>%
-  group_by(condition) %>%
+  group_by(Kind, condition) %>%
   pairwise_t_test(
     Behaviors ~ Sabotage, paired = TRUE, 
     p.adjust.method = "bonferroni"
     ) %>%
-  dplyr::select(-df, -statistic, -p) #removes details ## Using pairwise paired t-test comparisons, it can be seen that for condition 1, the mean Behaviors were statistically significantly different between Sabotage 1 and 2(p = 0.018) and between Sabotage 2 and 3 (0.027). For condition 2 the means were not significantly different between Sabotage 1 and 2 (0.897) and Sabotage 1 and 3 (p = 0.215), but they were significantly different between Sabotage 2 and 3 (p = 0.013)
-
-#NB: two way mixed ANOVA ha 3 null hypotheses - no difference in btn group variable, no difference in within grp variable, and no interaction effect
-
-
-###==============REDO THIS ANOVA ON SPSS======================##
-
-
-
-#The anova I just ran doesnt count because I my IVs were condition and sabotage but I ignored Kind. 
-```
-
-## Ordinal Logistic Regression
-
-```{r}
-
-#what do I have
-
-# 5 categories in DV
-# 2 discrete predictors: condition and Sabotage
-
-
-#================ Tutorial source: https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/ ===========#
-
-datr <- dat %>%
-    mutate_at(vars(Behaviors), factor) 
-  
-
-## Descriptive stats
-
-#count
-lapply(datr[, c("Behaviors", "condition", "Sabotage")], table)
-
-#three way cross tabs (xtabs) and flatten the table
-ftable(xtabs(~ condition + Behaviors + Sabotage, data = datr))
-
-## fit ordered logit model and store results 'm'
-m <- polr(Behaviors ~ condition + Sabotage, data = datr, Hess=TRUE) #hess = true gives you standard errors
-
-
-## view a summary of the model
-summary(m) #we have 5 intercepts corresponding to the 5 DV categories, but we aren't interested in that. Their intercept values just reflect the increasing odds as you look at probabilities of being in higher levels of categories. 
-
-# logit (P(y<1) = -0.8 -)
-
-## store table
-(ctable <- coef(summary(m)))
-
-p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
-
-## combined table
-(ctable <- cbind(ctable, "p value" = p))
-
-## odds ratios
-exp(coef(m))
-##  pared public    gpa 
-## 2.8511 0.9429 1.8514
-## OR and CI
-exp(cbind(OR = coef(m)))
-##            OR  2.5 % 97.5 %
-## pared  2.8511 1.6958  4.817
-## public 0.9429 0.5209  1.681
-## gpa    1.8514 1.1136  3.098
-exp(cbind(OR = coef(m), confint(m)))
-
-
-pred <- predict(m, datr[1:5,], type = 'prob')
-print(pred, digits = 3)
-
-#condition and sabotage 1-2 are statistically significant. 1 to 3 are not. 
-
-
-##NULL HYPOTHESIS: NO signficant differene bewteen baseline model and final model
-
-#How much variance in predictor explains variance in dependent variable
-datr2 <- datr %>%
-  filter(Kind == "actual")
-
-
-
+  dplyr::select(-df, -statistic, -p) #removes details ## Using pairwise paired t-test comparisons, it can be seen that the mean Behaviors were only statistically significantly different between Sabotage 1 and 2(p = 0.005) in condition 1, actual factor
 
 ```
+### Ordinal Logistic Regression 2
 
-# test
 ```{r}
-
-get_anova_table(res.aov)
-
-datlin <- dat %>%
-  mutate_at(vars(ResponseId), factor) 
-
-  mutate_at(vars(Behaviors), numeric)
-
-
-linear <- lmer(Behaviors~condition + Sabotage + condition*Sabotage + (1|ResponseId), data = datlin)
-anova(linear)
-
-datlogistic <- datlin %>%
+dat4 <- dat %>%
     mutate_at(vars(Behaviors), factor)
-#tutorials: https://stackoverflow.com/questions/49103318/anova-function-when-comparing-logistic-models-has-no-p-value-for-deviance
-#tutorial2: https://stats.stackexchange.com/questions/59879/logistic-regression-anova-chi-square-test-vs-significance-of-coefficients-ano
-
 
 #1 - Main effect of condition
-logistic0 <- clmm(Behaviors~ 1 + (1|ResponseId), data = datlogistic, link = "logit")
-summary(logistic0)
-
-logistic1 <- clmm(Behaviors~ condition + (1|ResponseId), data = datlogistic, link = "logit")
-summary(logistic1)
-
-anova(logistic0, logistic1) #'test' argument ignored in anova.clm
-
+mod1b <- clmm(Behaviors ~ 1 + (1|ResponseId), data = dat4, link = "logit") #mixed cumulative link model
+mod2b <- clmm(Behaviors ~ condition + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod2b) #main effect of condition p = 0.04
 
 #2 - Main effect of Sabotage
-logistic2 <- clmm(Behaviors~ Sabotage + (1|ResponseId), data = datlogistic, link = "logit")
-summary(logistic2)
-
-anova(logistic1, logistic2)
-
-#3 - interaction effect
-logistic3 <- clmm(Behaviors~ condition*Sabotage + (1|ResponseId), data = datlogistic, link = "logit")
-summary(logistic3)
-
-anova(logistic1, logistic2, logistic3)
-
-# Now that you have simple main effects, time to do multiple comparisons post hoc
-
-# tutorial1: https://stats.stackexchange.com/questions/60352/comparing-levels-of-factors-after-a-glm-in-r
-#tutorial 2: https://stats.idre.ucla.edu/r/faq/how-can-i-test-contrasts-in-r/
-
-
-##FINALLY I CAN SAY MY REGRESSION AND MY ANOVA AGREE RESULTS-WISE. PERRFECTT. THE FIGURES AREN"T EXACT BUT THE GENERAL SENTIMENT IS THE SAME. 
-#NEXT UP< CLEAN CODE AND RE-PERFORM ANOVA ON "ACTUAL"-FILTERED DATA
-```
-
-# OLS PART 2
-
-```{r}
-#I"VE FIGURED IT OUT!!
-#SOURCE: https://marissabarlaz.github.io/portfolio/ols/
-
-# OLS IS a type of CLM model - cumulative link model. YOu can either use MASS package for polr() or clm() and clmm() in ordinal package. clmm() is for mixed effects so thats probabyl what i'm going for.
-
-cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
-
-dattest2 %>%
-ggplot(aes(x=interaction(condition, Sabotage), fill = Behaviors)) +
-  geom_bar(position = "fill") + scale_fill_manual(values = cbPalette) + theme_minimal()
-
-str(dat)
-
-
-
-library(ordinal)
-
-
-ols1 = clmm(Behaviors ~ condition + Sabotage + condition*Sabotage + (1|ResponseId) + (1|Sabotage), data = dattest2, link = "logit")
-summary(ols1)
-
-dattest3 <- dattest2 %>%
-    mutate_at(vars(ResponseId), factor) 
-
-anova(ols1, test = 'Chisq')
-
-## ALSO GO BACK AND REMOVE EXTREME OUTLIERS THEN RERUN ANOVA
-
-
-#Mad advice here: https://stats.stackexchange.com/questions/28938/why-do-linear-regression-and-anova-give-different-p-value-in-case-of-consideri. Do 2 models, one with and one without predictor then compare in anova() 
-
-model12 = clmm(Behaviors ~ 1 + condition + Sabotage + condition*Sabotage + (1|ResponseId), data = dattest2, link = "logit")
-summary(model12)
-
-anova(model1, type = 3)
-
-
-model2 = clmm(Behaviors ~ condition + (1|ResponseId), data = dattest3, link = "logit")
-summary(model2)
-
-
-anova(model1, model2)
-
-options(contrasts=c("contr.sum","contr.poly"))
-moD2 <- clmm(Behaviors ~ condition + Sabotage + condition*Sabotage + (1|ResponseId), data = dattest3, link = "logit")
-summary(moD2)
-anova(moD2)
-
-
-
-
-```
-
-
- More logistic code
- 
-```{r}
-
-
-
-
-
-logistic <- glm(Behaviors ~ condition, data = d, family = "binomial")
-summary(logistic)
-
-logistic2 <- glm(Behaviors ~ condition + Sabotage, data = d, family = "binomial")
-summary(logistic2)
-
-ll.null <- logistic2$null.deviance/-2
-ll.proposed <- logistic2$deviance/-2
-(ll.null - ll.proposed)/ll.null #overall ES = 0.0132
-
-
-str(d)
-
-
-####### SOMETHNING seems UP>>>DATA SEEMS TOO LONG>>>REDUCE IT IF I CAN
-```
-
-videos to watch
-Stats quest: https://www.youtube.com/watch?v=C4N3_XJJ-jU&t=209s
-Look up glm matrices
-Setting and keeping contrasts: https://faculty.nps.edu/sebuttre/home/R/contrasts.html
-Design matrices stats quest: https://www.youtube.com/watch?v=CqLGvwi-5Pc
-Original tutorial: https://stats.idre.ucla.edu/r/dae/ordinal-logistic-regression/
-Another logistic tutorial: https://stats.idre.ucla.edu/r/faq/ologit-coefficients/
-Another tutorial: http://r-statistics.co/Ordinal-Logistic-Regression-With-R.html
-
-```{r}
-# convert Behaviors to ordered factor using as.ordered
-
-
-#Ordinal logistic regression is also known as proportion odds logistic regression
-
-# use library(MASS)
-```
-
-## END Notes
-
-
-```{r}
-
-## Google search shows there doesn't exist any non-parametric alternatives to 2-way ANOVA. Opinion is mixed but most seem to agree its still okay to do two-way ANOVA on Likert-type data like mine. See: https://journal.equinoxpub.com/JRDS/article/view/9482. So we will do ANOVA and then see if there are other alternatives. Looks like we could also do an ordinal logistic regression. 
-
-# Another source has also indicated I can actually do an ANOVA despite my data being Likert type because 1) I have a valid zero-point in my DV, and 2) I have a valid constant separation between categories, so my variance is not meaningless. SOurce: look up "ANOVA for Likert type data". 
-
-
-# some helpful links
-# https://stackoverflow.com/questions/20060949/ggplot2-multiple-sub-groups-of-a-bar-chart
-
-
-# examine Skewness of data
-hist(dat_filt$Behaviors)
-
-library(moments)
-skewness(dat_filt$Behaviors, na.rm = TRUE) # skewness coefficient of 1.23. Skewness of >1 means data is highly skewed
-
-# What kind of transformation do I need
-    # Well, one that treats dependent variable as one of 5 "ranks". 
-    # Kruskal-Wallis and Friedman handle only 1 factor of N levels, so cant be used to examine interaction effects. 
-    # Also my dv is ordinal; cant be transformed w/log transform: https://depts.washington.edu/acelab/proj/art/index.html
-# looks like I need to do either an (ordinal?) linear mixed effects regression or an ordinal logistic regression or an ART ANOVA(Aligned Rank Transformed ANOVA)
-
-# linear mixed effects then plot residuals. Look at Kurtosis. Will violate normality but doesnt matter
-
+mod3b <- clmm(Behaviors ~ Sabotage + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod3b) #p = 0.0058
+
+#3 - Main effect of Kind
+mod4b <- clmm(Behaviors ~ Kind + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod4b) #p = 0.0058
+
+#4 - interaction effect
+mod5b <- clmm(Behaviors ~ condition*Sabotage + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod5b) #p = 0.001
+
+# linear mixed effects regression
+linb <- lmer(Behaviors~condition + Kind + Sabotage + condition*Sabotage + condition*Kind + Kind*Sabotage + condition*Kind*Sabotage + (1|ResponseId), data = dat)
+anova(linb) #ran linear just to see if similar results to ANOVA > mostly similar
 
 ```
 
