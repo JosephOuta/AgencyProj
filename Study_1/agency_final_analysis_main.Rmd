@@ -14,20 +14,16 @@ Data Preparation
 Load packages
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = normalizePath(".."))
-
 library(tidyverse) # for data munging
-library(knitr) 
-library(rstatix)
-library(ggpubr)
+library(rstatix) #for posthoc tests
 library(lme4)
 library(lmerTest)
-library(MASS) #for regression. #masks select from rstatix and dplyr...so specify using dplyr::select
-library(hablar) #you need this for batch-converting to numeric
+library(MASS) #for regression. #masks select from rstatix and dplyr
+library(hablar) #for batch-converting to numeric
 library(dae)
 library(ordinal) #for clmm regression
 
-d <- read_csv("agendata.csv")
+d <- read_csv("Data/agendata.csv")
 
 d <- rename(d, AttnCheck = "Debrief+attend") 
 filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
@@ -659,4 +655,8 @@ anova(linb) #ran linear just to see if similar results to ANOVA > mostly similar
 
 ```
 
+
+```{r}
+sessionInfo()
+```
 
