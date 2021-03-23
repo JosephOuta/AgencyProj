@@ -1,0 +1,293 @@
+---
+title: "follow_up"
+author: "Joseph"
+date: "3/16/2021"
+output: html_document
+---
+
+Setup
+
+```{r setup, include=FALSE}
+library(tidyverse) # for data munging
+library(hablar) #you need this for batch-converting to numeric
+library(lme4)
+library(performance) #for running check_model
+library(see) #to visualize check model
+
+df.raw <- read_csv("Data/pilot.csv")
+
+names(df.raw)
+
+df.raw %>% 
+  rename(AttnCheck = "Debrief+attend") %>% 
+  filter(AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
+
+#check numbers of exclusions
+df.raw %>%
+  dplyr::slice(3:length(df.raw$ResponseId)) %>%
+  filter(Status==0) %>% #1 are preview rows
+  rename(AttnCheck = "Debrief+attend") %>%
+  dplyr::select(Agency2, NonA2, AttnCheck) %>%
+  arrange(Agency2) %>% #starts 241.
+  filter(!is.na(Agency2)|!is.na(NonA2)) %>% 
+  filter(AttnCheck==5) #then 227 (9 excluded)
+
+names(df.raw)
+```
+
+
+# NB: FIX THE NAMES OF COLUMNS LIKE DEBRIEF+ATTEND, ECNS BEFORE RUNNING STUDY
+
+# Wrangle
+
+## HERE I COMBINED GOOD AND BAD RESPONSES. IN THE FUTURE I HAVE TO SEPARATE THEM
+
+```{r}
+
+df.raw <- df.raw %>% 
+  rename(
+    #=======Agency=========#
+    #agency actual
+    "A.actual_1:anti1" = A.actual_1a, #cseparate prosocial responses from antisocial 
+    "A.actual_1:anti2" = A.actual_1b,
+    "A.actual_1:anti3" = A.actual_1c,
+    "A.actual_1:anti4" = A.actual_1d,
+    "A.actual_1:anti5" = A.actual_1e,
+    "A.actual_1:pro1" = A.actual_1f,
+    "A.actual_1:pro2" = A.actual_1g,
+    "A.actual_1:pro3" = A.actual_1h,
+    "A.actual_1:pro4" = A.actual_1i,
+    "A.actual_1:pro5" = A.actual_1j,
+    
+    "A.actual_2:anti1" = A.actual_2a, 
+    "A.actual_2:anti2" = A.actual_2b,
+    "A.actual_2:anti3" = A.actual_2c,
+    "A.actual_2:anti4" = A.actual_2d,
+    "A.actual_2:anti5" = A.actual_2e,
+    "A.actual_2:pro1" = A.actual_2f,
+    "A.actual_2:pro2" = A.actual_2g,
+    "A.actual_2:pro3" = A.actual_2h,
+    "A.actual_2:pro4" = A.actual_2i,
+    "A.actual_2:pro5" = A.actual_2j,
+    
+    "A.actual_3:anti1" = A.actual_3a, 
+    "A.actual_3:anti2" = A.actual_3b,
+    "A.actual_3:anti3" = A.actual_3c,
+    "A.actual_3:anti4" = A.actual_3d,
+    "A.actual_3:anti5" = A.actual_3e,
+    "A.actual_3:pro1" = A.actual_3f,
+    "A.actual_3:pro2" = A.actual_3g,
+    "A.actual_3:pro3" = A.actual_3h,
+    "A.actual_3:pro4" = A.actual_3i,
+    "A.actual_3:pro5" = A.actual_3j,
+    
+    #Agency Deserve
+    "A.deserve_1:anti1" = A.deserve_1a, #cseparate prosocial responses from antisocial 
+    "A.deserve_1:anti2" = A.deserve_1b,
+    "A.deserve_1:anti3" = A.deserve_1c,
+    "A.deserve_1:anti4" = A.deserve_1d,
+    "A.deserve_1:anti5" = A.deserve_1e,
+    "A.deserve_1:pro1" = A.deserve_1f,
+    "A.deserve_1:pro2" = A.deserve_1g,
+    "A.deserve_1:pro3" = A.deserve_1h,
+    "A.deserve_1:pro4" = A.deserve_1i,
+    "A.deserve_1:pro5" = A.deserve_1j,
+    
+    "A.deserve_2:anti1" = A.deserve_2a, 
+    "A.deserve_2:anti2" = A.deserve_2b,
+    "A.deserve_2:anti3" = A.deserve_2c,
+    "A.deserve_2:anti4" = A.deserve_2d,
+    "A.deserve_2:anti5" = A.deserve_2e,
+    "A.deserve_2:pro1" = A.deserve_2f,
+    "A.deserve_2:pro2" = A.deserve_2g,
+    "A.deserve_2:pro3" = A.deserve_2h,
+    "A.deserve_2:pro4" = A.deserve_2i,
+    "A.deserve_2:pro5" = A.deserve_2j,
+    
+    "A.deserve_3:anti1" = A.deserve_3a, 
+    "A.deserve_3:anti2" = A.deserve_3b,
+    "A.deserve_3:anti3" = A.deserve_3c,
+    "A.deserve_3:anti4" = A.deserve_3d,
+    "A.deserve_3:anti5" = A.deserve_3e,
+    "A.deserve_3:pro1" = A.deserve_3f,
+    "A.deserve_3:pro2" = A.deserve_3g,
+    "A.deserve_3:pro3" = A.deserve_3h,
+    "A.deserve_3:pro4" = A.deserve_3i,
+    "A.deserve_3:pro5" = A.deserve_3j,
+    
+    
+    #====NonAgency =======#
+    #Non agency actual
+    "NA.actual_1:anti1" = NA.actual_1a, 
+    "NA.actual_1:anti2" = NA.actual_1b,
+    "NA.actual_1:anti3" = NA.actual_1c,
+    "NA.actual_1:anti4" = NA.actual_1d,
+    "NA.actual_1:anti5" = NA.actual_1e,
+    "NA.actual_1:pro1" = NA.actual_1f,
+    "NA.actual_1:pro2" = NA.actual_1g,
+    "NA.actual_1:pro3" = NA.actual_1h,
+    "NA.actual_1:pro4" = NA.actual_1i,
+    "NA.actual_1:pro5" = NA.actual_1j,
+    
+    "NA.actual_2:anti1" = NA.actual_2a, 
+    "NA.actual_2:anti2" = NA.actual_2b,
+    "NA.actual_2:anti3" = NA.actual_2c,
+    "NA.actual_2:anti4" = NA.actual_2d,
+    "NA.actual_2:anti5" = NA.actual_2e,
+    "NA.actual_2:pro1" = NA.actual_2f,
+    "NA.actual_2:pro2" = NA.actual_2g,
+    "NA.actual_2:pro3" = NA.actual_2h,
+    "NA.actual_2:pro4" = NA.actual_2i,
+    "NA.actual_2:pro5" = NA.actual_2j,
+    
+    "NA.actual_3:anti1" = NA.actual_3a, 
+    "NA.actual_3:anti2" = NA.actual_3b,
+    "NA.actual_3:anti3" = NA.actual_3c,
+    "NA.actual_3:anti4" = NA.actual_3d,
+    "NA.actual_3:anti5" = NA.actual_3e,
+    "NA.actual_3:pro1" = NA.actual_3f,
+    "NA.actual_3:pro2" = NA.actual_3g,
+    "NA.actual_3:pro3" = NA.actual_3h,
+    "NA.actual_3:pro4" = NA.actual_3i,
+    "NA.actual_3:pro5" = NA.actual_3j,
+    
+    #Non agency deserve
+    "NA.deserve_1:anti1" = NA.deserve_1a, 
+    "NA.deserve_1:anti2" = NA.deserve_1b,
+    "NA.deserve_1:anti3" = NA.deserve_1c,
+    "NA.deserve_1:anti4" = NA.deserve_1d,
+    "NA.deserve_1:anti5" = NA.deserve_1e,
+    "NA.deserve_1:pro1" = NA.deserve_1f,
+    "NA.deserve_1:pro2" = NA.deserve_1g,
+    "NA.deserve_1:pro3" = NA.deserve_1h,
+    "NA.deserve_1:pro4" = NA.deserve_1i,
+    "NA.deserve_1:pro5" = NA.deserve_1j,
+    
+    "NA.deserve_2:anti1" = NA.deserve_2a, 
+    "NA.deserve_2:anti2" = NA.deserve_2b,
+    "NA.deserve_2:anti3" = NA.deserve_2c,
+    "NA.deserve_2:anti4" = NA.deserve_2d,
+    "NA.deserve_2:anti5" = NA.deserve_2e,
+    "NA.deserve_2:pro1" = NA.deserve_2f,
+    "NA.deserve_2:pro2" = NA.deserve_2g,
+    "NA.deserve_2:pro3" = NA.deserve_2h,
+    "NA.deserve_2:pro4" = NA.deserve_2i,
+    "NA.deserve_2:pro5" = NA.deserve_2j,
+    
+    "NA.deserve_3:anti1" = NA.deserve_3a, 
+    "NA.deserve_3:anti2" = NA.deserve_3b,
+    "NA.deserve_3:anti3" = NA.deserve_3c,
+    "NA.deserve_3:anti4" = NA.deserve_3d,
+    "NA.deserve_3:anti5" = NA.deserve_3e,
+    "NA.deserve_3:pro1" = NA.deserve_3f,
+    "NA.deserve_3:pro2" = NA.deserve_3g,
+    "NA.deserve_3:pro3" = NA.deserve_3h,
+    "NA.deserve_3:pro4" = NA.deserve_3i,
+    "NA.deserve_3:pro5" = NA.deserve_3j,
+  )
+```
+
+
+```{r}
+
+df.wrangled <- df.raw %>% 
+  slice(-1, -2) %>% 
+  dplyr::filter(Status==0) %>% #remove survey previews
+  dplyr::filter(Finished==1) %>% #remove unfinished responses
+  retype() %>% 
+  mutate(condition = ifelse(is.na(Agency2), "Compliance", "Agency")) %>% 
+  mutate(actual_vign1.anti = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_1:anti")), na.rm = TRUE), #rowMeans > rowwise
+                               rowMeans(select(., starts_with("NA.actual_1:anti")), na.rm = TRUE)),
+         actual_vign1.pro = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_1:pro")), na.rm = TRUE), 
+                               rowMeans(select(., starts_with("NA.actual_1:pro")), na.rm = TRUE)),
+         
+         actual_vign2.anti = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_2:anti")), na.rm = TRUE),
+                               rowMeans(select(., starts_with("NA.actual_2:anti")), na.rm = TRUE)),
+         actual_vign2.pro = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_2:pro")), na.rm = TRUE),
+                               rowMeans(select(., starts_with("NA.actual_2:pro")), na.rm = TRUE)),
+         
+         actual_vign3.anti = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_3:anti")), na.rm = TRUE),
+                               rowMeans(select(., starts_with("NA.actual_3:anti")), na.rm = TRUE)),
+         actual_vign3.pro = ifelse(condition == "Agency",
+                               rowMeans(select(., starts_with("A.actual_3:pro")), na.rm = TRUE),
+                               rowMeans(select(., starts_with("NA.actual_3:pro")), na.rm = TRUE)),
+         
+         deserve_vign1.anti = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_1:anti")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_1:anti")), na.rm = TRUE)),
+         deserve_vign1.pro = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_1:pro")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_1:pro")), na.rm = TRUE)),
+         
+         deserve_vign2.anti = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_2:anti")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_2:anti")), na.rm = TRUE)),
+         deserve_vign2.pro = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_2:pro")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_2:pro")), na.rm = TRUE)),
+         
+         deserve_vign3.anti = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_3:anti")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_3:anti")), na.rm = TRUE)),
+         deserve_vign3.pro = ifelse(condition == "Agency",
+                                rowMeans(select(., starts_with("A.deserve_3:pro")), na.rm = TRUE),
+                                rowMeans(select(., starts_with("NA.deserve_3:pro")), na.rm = TRUE)))
+
+df.long <- df.wrangled %>% 
+  select(ResponseId, condition, starts_with("actual_vign"), starts_with("deserve_vign")) %>% 
+  pivot_longer(cols = -c(ResponseId, condition),
+               names_to = "names",
+               values_to = "behaviors") %>% 
+  separate(names, c("group", "vignette"), sep = "_") %>% 
+  separate(vignette, c("vignette", "type")) 
+
+df.plot <- df.long %>% 
+  group_by(condition, group, vignette, type) %>%
+  summarize(mean = mean(behaviors, na.rm = TRUE))  %>% 
+  filter(group == "actual") %>% 
+  ggplot(aes(x = vignette, y = mean, group = type, fill = type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_wrap(~condition)
+
+df.long %>% 
+  filter(group == "actual") %>% 
+  ggplot(aes(x = vignette, y = behaviors, group = type, color = type)) +
+  stat_summary(fun = "mean",
+               geom = "point") +
+  facet_wrap(~condition)
+
+df.long %>% 
+  filter(group == "actual") %>% 
+  ggplot(aes(x = type, y = behaviors, fill = type)) +
+  stat_summary(fun = "mean",
+               geom = "bar") +
+  facet_wrap(~condition)
+
+
+```
+
+
+```{r}
+df.long
+
+
+fit.compact <- lm(behaviors ~ 1, data = df.long)
+fit.augmented <- lmer(behaviors ~ condition*type + (1|ResponseId) + (1 + vignette|ResponseId), data = df.long)
+#anova(fit.compact, fit.augmented)
+
+#summary(fit.augmented)
+
+#check_model(fit.augmented)
+  
+```
+
+```{r}
+
+
+```
+

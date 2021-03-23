@@ -1,0 +1,904 @@
+---
+title: "Agency_analysis_final"
+author: "Joseph"
+date: "11/4/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+Data Preparation
+
+Load packages
+
+```{r setup, include=FALSE}
+library(tidyverse) # wrangling & plotting
+library(lme4) #for linear mixed model
+library(hablar) # for batch-converting to numeric
+library(performance) #for check_model()
+library(rstatix) #for posthoc tests -> old anova
+library(emmeans) #for pairwise comparisons
+library(car) #for Anova() [unbalanced designs] Matches SPSS 
+library(afex) #for aov_ez() [mixed effects & unbalanced]
+library(ordinal) #for clmm ordinal regression
+library(brms) #for brms ordinal regression
+library(rstan)
+
+d <- read_csv("Data/agendata.csv")
+
+d <- dplyr::rename(d, AttnCheck = "Debrief+attend") 
+filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
+#check numbers of exclusions
+# d %>%
+#   dplyr::slice(3:length(d$ResponseId)) %>%
+#   filter(Status==0) %>%
+#   rename(AttnCheck = "Debrief+attend") %>%
+#   dplyr::select(Agency2, NonA2, AttnCheck) %>%
+#   arrange(Agency2) %>% #starts 241. 
+#   filter(!is.na(Agency2)|!is.na(NonA2)) %>% #then 236 (5 excluded)
+#   filter(AttnCheck==5) #then 227 (9 excluded)
+
+```
+
+# Data Wrangling
+
+```{r cleaning and wrangling}
+d <- d %>%
+  dplyr::slice(-1, -2) %>% #remove first 2 rows with title info
+  filter(Status==0) %>% #Remove Survey Preview rows
+  arrange(Agency2) %>% #Arrange data by condition
+  dplyr::rename(ECNA = "Q51") %>% #241 initial participants
+  filter(AttnCheck==5) %>% #Exclude participants who failed attention end-check (6)
+  filter(!is.na(Agency2)|!is.na(NonA2)) %>%  #Exclude participants who left attn. manipulation checks blank (5)
+  convert(num(Sab1_1,Sab1_2, Sab1_3, Sab1_4,Sab1_5,
+         Sab1b_1,Sab1b_2,Sab1b_3,Sab1b_4,Sab1b_5,
+         Sab2_1,Sab2_2,Sab2_3,Sab2_4,Sab2_5,
+         Sab2b_1,Sab2b_2,Sab2b_3,Sab2b_4,Sab2b_5,
+         Sab3_1,Sab3_2,Sab3_3,Sab3_4,Sab3_5,
+         Sab3b_1,Sab3b_2,Sab3b_3,Sab3b_4,Sab3b_5,
+         EC,
+         Sab1NA_1,Sab1NA_2,Sab1NA_3,Sab1NA_4,Sab1NA_5,
+         Sab1NAb_1,Sab1NAb_2,Sab1NAb_3,Sab1NAb_4,Sab1NAb_5,
+         Sab2NA_1,Sab2NA_2,Sab2NA_3,Sab2NA_4,Sab2NA_5,
+         Sab2NAb_1,Sab2NAb_2,Sab2NAb_3,Sab2NAb_4,Sab2NAb_5,
+         Sab3NA_1,Sab3NA_2,Sab3NA_3,Sab3NA_4,Sab3NA_5,
+         Sab3NAb_1,Sab3NAb_2,Sab3NAb_3,Sab3NAb_4,Sab3NAb_5,
+         ECNA,AttnCheck)) %>% #convert relevant cols from character to numeric
+  mutate(condition = ifelse(is.na(Agency2), "Compliance", "Agency")) %>% #create longform condition label column
+  rowwise() %>%
+  mutate(deserve.sab1 = ifelse(condition == "Agency", #create summed columns for each condition && vignette
+                              sum(Sab1_1, Sab1_2, Sab1_3, Sab1_4, Sab1_5, na.rm = TRUE),
+                              sum(Sab1NA_1, Sab1NA_2, Sab1NA_3, Sab1NA_4, Sab1NA_5, na.rm = TRUE))) %>%
+  mutate(deserve.sab2 = ifelse(condition == "Agency",
+                              sum(Sab2_1, Sab2_2, Sab2_3, Sab2_4, Sab2_5, na.rm = TRUE),
+                              sum(Sab2NA_1, Sab2NA_2, Sab2NA_3, Sab2NA_4, Sab2NA_5, na.rm = TRUE))) %>%
+  mutate(deserve.sab3 = ifelse(condition == "Agency",
+                              sum(Sab3_1, Sab3_2, Sab3_3, Sab3_4, Sab3_5, na.rm = TRUE),
+                              sum(Sab3NA_1, Sab3NA_2, Sab3NA_3, Sab3NA_4, Sab3NA_5, na.rm = TRUE))) %>%
+  
+  mutate(actual.sab1 = ifelse(condition == "Agency",
+                              sum(Sab1b_1, Sab1b_2, Sab1b_3, Sab1b_4, Sab1b_5, na.rm = TRUE),
+                              sum(Sab1NAb_1, Sab1NAb_2, Sab1NAb_3, Sab1NAb_4, Sab1NAb_5, na.rm = TRUE))) %>%
+  mutate(actual.sab2 = ifelse(condition == "Agency",
+                              sum(Sab2b_1, Sab2b_2, Sab2b_3, Sab2b_4, Sab2b_5, na.rm = TRUE),
+                              sum(Sab2NAb_1, Sab2NAb_2, Sab2NAb_3, Sab2NAb_4, Sab2NAb_5, na.rm = TRUE))) %>%
+  mutate(actual.sab3 = ifelse(condition == "Agency",
+                              sum(Sab3b_1, Sab3b_2, Sab3b_3, Sab3b_4, Sab3b_5, na.rm = TRUE),
+                              sum(Sab3NAb_1, Sab3NAb_2, Sab3NAb_3, Sab3NAb_4, Sab3NAb_5, na.rm = TRUE))) %>%
+  dplyr::select(ResponseId, Agency2, NonA2, condition,
+               deserve.sab1, deserve.sab2, deserve.sab3,
+               actual.sab1, actual.sab2, actual.sab3)  #select relevant columns for further analysis 
+
+```
+
+Attention Exclusions 
+
+## Agency Exclusions 
+
+Excluding based on failed attention responses in Agency condition manipulation check (57 exclusions)
+
+```{r}
+d <- d %>%
+  filter( # Exclusion 2: exclude failed condition 1 Attention Check
+       !grepl("5", Agency2),
+       # CODER 1 - JOSEPH OUTA
+       !grepl("Balancing the Company's Needs and Employee Satisfaction", Agency2), #page 1
+       !grepl("Based on the company values or mission statement", Agency2),
+       !grepl("By the value", Agency2),
+       !grepl("Company decisions should be based on values", Agency2),
+       !grepl("Decisions will be all over the place and inconsistent.", Agency2),
+       !grepl("Employees should make decisions based on values.", Agency2), #page 2 of preview
+       !grepl("Employees should keep the big picture in mind. Not ever customer will be the same and they must respect them and handle them in a friendly manner.", Agency2), # page 3
+       !grepl("Focus on customer care and well-being", Agency2), # page 4
+       !grepl("It treats the costumer with professionalism", Agency2),  
+       !grepl("Quality and respect", Agency2), #page 5
+       !grepl("quickly and confidently", Agency2),
+       !grepl("should make them respectfully and fairly", Agency2), #page 7
+       !grepl("That they should do them with the best interests of the company in mind", Agency2),
+       !grepl("They respect there policy", Agency2), #page 8
+       !grepl("They should make decisions that the company would approve of and they themselves would approve of.", Agency2),
+       !grepl("They should think about your value as a pets", Agency2), #page 9
+       !grepl("They should try to be more friendly towards customers.", Agency2),
+       !grepl("to serve the customer best", Agency2), #page 10
+       !grepl("Treat customers in professional and friendly manner", Agency2),
+       !grepl("treat employees well", Agency2),
+       !grepl("Treat the customers well.", Agency2),
+       !grepl("yes", Agency2), #page 11
+       
+       # CODER 2 - YUEL LI ADDITIONAL EXCLUSIONS
+       !grepl("Allows customers to make company decisions", Agency2),
+       !grepl("By working together", Agency2),
+       !grepl("Employees of SerVest should be mindful of the different value's their customers might have.", Agency2),
+       !grepl("Employees should make company decisions based on the values the company at large has, not their own.", Agency2),
+       !grepl("Employees should make company decisions taking into account customer values.", Agency2),
+       !grepl("Employees should make company decisions with the customer's best interest in mind. All decisions should benefit the customer first.", Agency2),
+       !grepl("employees should make the best decisions for the customers", Agency2),
+       !grepl("Employees should work together to make decisions.", Agency2),
+       !grepl("Following their guidelines", Agency2),
+       !grepl("How to best serve their interests.", Agency2),
+       !grepl("I believe that when the company encourages people who do not agree with their beliefs to find another place to be serviced, it gives the employees more power to say who can and cannot shop there.", Agency2),
+       !grepl("In a professional and caring manner", Agency2),
+       !grepl("Sarvest trusts its employees to make good decisions", Agency2),
+       !grepl("Servest relies on employees making good choices.", Agency2),
+       !grepl("SerVest understands that company values vary and they trust companies to make their own decisions that reflect those.", Agency2),
+       !grepl("That the company has certain values and also employees should also have those values and their own", Agency2),
+       !grepl("They respect there policy", Agency2),
+       !grepl("They should accomidate the customer's values", Agency2),
+       !grepl("They should make decisions that the company would approve of and they themselves would approve of.", Agency2),
+       !grepl("They should make decisions with the customers in mind", Agency2),
+       !grepl("They should put customer service first.", Agency2),
+       !grepl("They should reflect customer values", Agency2),
+       !grepl("they take in mind what customers say", Agency2),
+       !grepl("to reflect customer's beliefs", Agency2),
+       !grepl("trust employee to make decisions that will reflect positively on the company", Agency2),
+       !grepl("values reflect the work culture", Agency2),
+       !grepl("with consideration of the customer needs", Agency2),
+       !grepl("With morals & sincerity. SerVest trusts the employees", Agency2),
+       !grepl("with the customer in mind", Agency2),
+       !grepl("with the upmost integrity", Agency2)
+       )
+
+```
+
+## NonAgency Exclusions
+
+Excluding based on failed responses in Non-Agency condition manipulation check (32 exclusions)
+
+```{r}
+
+d <- d %>%
+  filter(# CODER 1 - JOSEPH OUTA
+         !grepl("By keeping a good relationship with the customer- honesty and respect.", NonA2), #page 1
+         !grepl("Company decisions are basically based in how they treat their cliental.", NonA2),
+         !grepl("Decisions should be made in a way that will serve the customers better", NonA2),
+         !grepl("Do not understand the question", NonA2),
+         !grepl("Employees should share their knowledge with others", NonA2),# page 3
+         !grepl("employess should be involved with company decisions since everyone has different opinions", NonA2), #page 4
+         !grepl("Ethical decisions", NonA2),
+         !grepl("I cannot remember", NonA2),
+         !grepl("im not aware", NonA2),
+         !grepl("It denotes professionalism that isn't swayed by the person in charge's own views.", NonA2),
+         !grepl("It says that Servest understands there are different personal values and trusts that those values will be reflected by you in the company.", NonA2),
+         !grepl("iT SHOULD BE REAL", NonA2), #page 5
+         !grepl("make them as a good decision", NonA2),
+         !grepl("my values might clash with company values", NonA2),
+         !grepl("Of course, they should think carefully and make a good decision", NonA2), #page 7
+         !grepl("Of course, they should think carefully and make a good decision.", NonA2),
+         !grepl("ok", NonA2),
+         !grepl("SerVest does not discriminate.", NonA2), #page 8
+         !grepl("should keep customer in mind", NonA2),
+         !grepl("Should not use company's beliefs as part of personality", NonA2),
+         !grepl("They are respectful and pay close attention to detail", NonA2), #page 9
+         !grepl("they say you put the emotions of the customer into consideration", NonA2),
+         !grepl("They should think about the customer more than themselves.", NonA2),#page 10
+         !grepl("to the best", NonA2), #page 11
+         !grepl("Trust themselves to not let their values be swayed", NonA2),
+         !grepl("Value your privacy and your opinions.", NonA2),
+         !grepl("varies", NonA2),
+         !grepl("Vary depending on customer values", NonA2), #page 12
+         !grepl("with responsibility", NonA2),
+         !grepl("You should decide what to do", NonA2),
+         
+         # CODER 2 - YUE LI ADDITIONAL EXCLUSIONS
+         !grepl("Employees Should be able to make their own decisions", NonA2),
+         !grepl("information technogy company", NonA2),
+         !grepl("It's Information Technogy", NonA2),
+         !grepl("Like many companies, SerVest is committed to making sure customers are treated in a professional, friendly, and patient manner.", NonA2),
+         !grepl("my values might conflict with the company's", NonA2) 
+  )
+
+
+```
+
+# Primary Analysis 
+
+Will increasing agency lead to less retaliatory customer sabotage?
+
+## Exploratory Analyses 1
+
+```{r}
+#First wrangle data column to make plottable
+dat <- d %>%
+  dplyr::select(ResponseId, condition,
+                deserve.sab1, deserve.sab2, deserve.sab3,
+                actual.sab1, actual.sab2, actual.sab3) %>%
+  pivot_longer(-c("ResponseId", "condition"), 
+               names_to = "Key", 
+               values_to = "Behaviors") %>% #pivot long for plotting
+  separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
+  mutate(Vignette = ifelse(Sabotage == 'sab1', 'vign1',
+                           ifelse(Sabotage == 'sab2', 'vign2', 'vign3'))) %>% 
+  filter(Kind == "actual") %>% 
+  dplyr::select(ResponseId, condition, Vignette, Behaviors) %>% 
+  mutate_at(vars(condition), factor) %>%
+  mutate_at(vars(Vignette), factor) %>%
+  mutate_at(vars(ResponseId), factor)
+
+```
+
+Plots
+
+```{r}
+# facetted histogram of sabotage behaviors across conditions and vignettes
+dat %>% 
+  ggplot(aes(x = Behaviors, group = condition, fill = condition)) +
+  geom_bar(width = 0.75, position = position_dodge()) +
+  scale_x_continuous(breaks = seq (from = 0, to = 5, by = 1)) +
+  facet_grid(vars(Vignette), vars(condition)) +
+  labs(x = "Number of sabotage behaviors selected",
+       y = "Count",
+       fill = "Condition") +
+  theme(legend.position="none")
+
+# boxplot of unethical behaviors across all 3 IVs
+dat %>% 
+  ggplot(aes(x = condition, y = Behaviors,  color = Vignette)) +
+  geom_boxplot() #looks left skewed, makes sense since DV is Likert-type/ ordinal
+
+# boxplot but binned by within-participant variable Sabotage
+dat %>%
+  ggplot(aes(x = Vignette, y = Behaviors,  color = condition)) +
+  geom_boxplot()
+
+#interaction plot
+dat %>%
+  with(interaction.plot(x.factor = condition, trace.factor = Vignette, 
+                        response = Behaviors))
+
+std <- function(x) sd(x)/sqrt(length(x))
+dodge <- position_dodge(width = 0.9)
+
+dd <- dat %>% 
+  group_by(condition, Vignette) %>%
+  summarize(n = n(),
+            Mean = round(mean(Behaviors), 2), 
+            SE = round(std(Behaviors), 2))
+
+
+# barplot of mean actual behaviors across condition 
+dd %>%
+  ggplot(aes(x = condition, y = Mean, fill = Vignette)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  scale_y_continuous(breaks = seq(from = 0, to = 1.2, by = 0.2)) +
+  labs(y = "Mean sabotage behaviors") 
+  
+
+
+# point-plot of summary statistics
+dd %>% 
+  ggplot(aes(x = condition, y = Mean, group = Vignette, color = Vignette)) + 
+  geom_point() + 
+  geom_line() + #stat_summary(geom = "line") 
+  labs(y = "Mean sabotage behaviors")
+
+#point plot with error bars
+dat %>% 
+  ggplot(aes(x = condition, y = Behaviors, group = Vignette, color = Vignette)) + 
+  stat_summary(fun = "mean",
+               color = "black", 
+               geom = "point") +
+  stat_summary(fun.data = "mean_cl_boot",
+               geom = 'errorbar', width = 0.05) +
+  geom_smooth(method = "lm", se = F) +
+  labs(y = "Mean sabotage behaviors") 
+
+# point plot but binned by within-participant variable Sabotage
+dd %>%
+  ggplot(aes(x = Vignette, y = Mean, group = condition, col = condition)) + 
+  geom_point() + geom_line()
+
+# binned by Sabotage but averaged out across condition
+dd %>%
+  ggplot(aes(x = Vignette, y = Mean, group = condition, col = condition)) + 
+  geom_point() + geom_line()
+```
+
+Point plots and their violin alternatives
+
+```{r}
+
+#version1: A point plot with geom jitter to visualize overlapping points  (original version)
+dat %>%
+  ggplot(aes(x = condition, y = Behaviors, group = Vignette, color = Vignette)) +
+  geom_point() +
+  geom_jitter(width = 0.3, height = 0.1) +
+  stat_summary(
+    geom = "line",
+    fun.y = "mean",
+    size = 1,
+    fill = "red") +
+  stat_summary(
+    geom = "point",
+    fun.y = "mean",
+    size = 3) 
+
+#version 2: Violin plot + point plot binned by vignette
+dat %>%
+  ggplot(aes(x = Vignette, y = Behaviors, color = Vignette)) +
+  geom_violin(trim = F) +
+  geom_jitter(width = 0.3,
+              height = 0.05) +
+  facet_wrap(~condition) +
+  theme(legend.position="none") +
+  stat_summary(fun.data = "mean_cl_boot",
+               geom = "pointrange",
+               color = "black",
+               size = 0.3)
+
+
+#3: single black mean line
+dat %>%
+  ggplot(aes(x = condition, y = Behaviors, color = condition)) +
+  geom_violin(trim = F) +
+  geom_jitter(width = 0.3,
+              height = 0.05) +
+  theme(legend.position="none") +
+  stat_summary(fun = "mean", 
+               geom = "line", 
+               group = 1, 
+               color = "black") +
+  stat_summary(fun.data = "mean_cl_boot",
+               geom = "pointrange",
+               color = "black",
+               size = 0.3) +
+  theme(legend.position="none") 
+
+#4: mean lines colored, data points black
+dat %>%
+  ggplot(aes(x = condition, y = Behaviors)) +
+  geom_violin(trim = F) +
+  geom_jitter(width = 0.3,
+              height = 0.05) +
+  theme(legend.position="none") +
+  stat_summary(aes(group = Vignette, color = Vignette),
+               fun = "mean", 
+               geom = "line") +
+  stat_summary(aes(group = Vignette, color = Vignette),
+               fun.data = "mean_cl_boot",
+               geom = "pointrange",
+               size = 0.3) +
+  theme(legend.position="none") 
+
+#colored mean lines
+dat %>%
+  ggplot(aes(x = condition, y = Behaviors, color = condition)) +
+  geom_violin(trim = F) +
+  geom_jitter(width = 0.25,
+              height = 0.05) +
+  theme(legend.position="none") +
+  stat_summary(aes(group = Vignette, color = Vignette),
+               fun = "mean", 
+               geom = "line") +
+  stat_summary(aes(group = Vignette, color = Vignette),
+               fun.data = "mean_cl_boot",
+               geom = "pointrange",
+               size = 0.3) +
+  theme(legend.position="none") 
+
+#mean lines are all black
+dat %>%
+  ggplot(aes(x = condition, y = Behaviors, color = condition)) +
+  geom_violin(trim = F) +
+  geom_jitter(width = 0.25,
+              height = 0.05) +
+  theme(legend.position="none") +
+  stat_summary(aes(group = Vignette),
+               fun = "mean", 
+               geom = "line",
+               color = "black") +
+  stat_summary(aes(group = Vignette),
+               fun.data = "mean_cl_boot",
+               geom = "pointrange",
+               size = 0.3,
+               color = "black") +
+  theme(legend.position="none") 
+
+```
+
+
+## Confirmatory Analyses 1
+
+ANOVA and Ordinal Logistic Regression
+
+### Two-way Mixed Effects Anova 
+
+Since normality appears to be violated, we will conduct a two-way ANOVA anyway, then we will also conduct an ordinal logistic regression to see if results hold. NB: linear tests aren't as sensitive to normality assumptions as they are to homogeneity of variance assumptions. Our data appears to partially fail homogeneity test, so we might have to do an ordinal regression to see if pattern holds
+
+Our two way mixed ANOVA has 3 null hypotheses:
+- No difference in between-group variable (condition)
+- No difference in within group variable (Sabotage)
+- No interaction effect (condition:Sabotage)
+
+
+```{r}
+#==========#
+two.way <- anova_test(
+  data = dat, 
+  dv = Behaviors, 
+  wid = ResponseId,
+  between = condition, within = Vignette
+  )
+get_anova_table(two.way) # There was a statistically significant main effect of condition F(1, 146) = 0.032, main effect of Sabotage on unethical behaviors F(2, 277) = 7.93, p = 0.0004, and main interaction effect F(2, 277) = 0.015. generalized effect sizes were low
+
+#============ Post-Hoc Tests =============== ##
+
+# Simple Main Effect of Condition at each vignette level
+  ## Effect of condition at each vignettes
+dat %>%
+  group_by(Vignette) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, between = condition) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, the simple main effect of condition was significant at vign1 (p = 0.006) but not at vign2 (p = 0.88) and vign3 (p = 0.61).
+
+  ## Pairwise comparisons between conditions
+dat %>%
+  group_by(Vignette) %>%
+  pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison at vignette 1(p = 0.00199); but not in condition 1 vs condition 2 at vign 2 (p = 0.296) and at vign 3 (p = 0.203).
+
+# Simple Main effects of vignette variable 
+  ## Effect of Sabotage at each level of condition
+dat %>%
+  group_by(condition) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, within = Vignette) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of vignette on mean Behaviors for condition 1 (p = 0.008) but not for condition 2 (p = 0.384). 
+
+  ## Pairwise comparisons between condition at each Sabotage levels - Paired t-test is used because we have repeated measures by Sabotage
+dat %>%
+  group_by(condition) %>%
+  pairwise_t_test(
+    Behaviors ~ Vignette, paired = TRUE, 
+    p.adjust.method = "bonferroni"
+    ) %>%
+  dplyr::select(-df, -statistic, -p) ## Using pairwise paired t-test comparisons, it can be seen that for condition 1, the mean Behaviors were statistically significantly different between Sabotage 1 and 2(p = 0.005) but not for the rest of the Sabotage pairs. For condition 2 the means were not significantly different for any of the Sabotage pairs
+
+str(dat)
+```
+
+# Redoing the stats
+## ANOVA
+
+- Using aov_ez to capture unbalanced design and emmeans for post-hoc tests
+```{r}
+
+
+#============# summary()
+#summary won't give us main effects and interaction effects. It gives us tests that we often do not need. 
+#Summary is useful when we set contrasts. Instead use anova for main and int effects
+
+#============# sums of squares()
+#when using anova in unbalanced design, it makes a difference what kind of sums of squares you use. 
+# type 1 sums of squares is rarely used (its sequential). anova() uses type 1 sums of squares by defaily. 
+# type 2 sums of squares should not be used when theres an interaction
+# type 3 aka partial sums of squares = use. Not sequential so order doesnt matter. This is default in literature, i.e. SPSS
+
+#============#
+lm(Behaviors ~ condition*Vignette, 
+   data = dat,
+   contrasts = list(condition = "contr.sum", 
+                    Vignette = "contr.sum")) %>% 
+  Anova(type = "3") #difference is we also have main effect of vignette compared to simple lm
+
+#============#
+fit = aov_ez(id = "ResponseId",
+       dv = "Behaviors",
+       data = dat,
+       between = "condition",
+       within = "Vignette")
+fit$Anova #all significant = main 1, main 2, interaction
+
+#============# same as aov_ez() 
+mixed.anova.1 = lmer(Behaviors ~ condition + Vignette + condition*Vignette + 
+                       (1|ResponseId), 
+                     data = dat) #was not significant when added slopes for Vignettes
+anova(mixed.anova.1)
+
+#all pairwise comparisons with emmeans
+mixed.anova.1 %>% 
+  emmeans(pairwise ~ condition + Vignette,
+          adjust = "bonferroni") %>% 
+  pluck("contrasts")
+
+#check model
+mixed.anova.1 %>% 
+  check_model() #many violations -> think about doing ordinal?
+
+#check model matrix r is using to dummy code
+model.matrix(mixed.anova.1) %>% 
+  as_tibble() %>% 
+  distinct()
+
+#============# mixed() is literally lmer() then anova(lmer()) in 1 step
+mixed.anova.2 = mixed(Behaviors ~ condition + Vignette + condition*Vignette + 
+                      (1|ResponseId), 
+                    data = dat) 
+anova(mixed.anova.2) #still had to do anova to get results
+
+
+```
+
+## Permutation test
+- Next, try to do a permutation test (see lecture on Simulation 2). Useful if conditions of underlying distribution such as normality are violated
+```{r}
+
+n_permutations = 500
+
+func_permutations = function(df) {
+  df %>% 
+  mutate(condition2 = sample(condition)) %>% 
+  group_by(condition2) %>% 
+  summarize(mean = mean(Behaviors)) %>% 
+  pull(mean) %>% 
+  diff()
+}
+
+#run permutations using replicate rather than a forloop
+df.permutations = tibble(
+  permutations = 1:n_permutations,
+  mean_difference = replicate(n = n_permutations, func_permutations(dat))
+)
+
+df.permutations %>%
+  ggplot(aes(x = mean_difference)) +
+  geom_histogram()
+  summarize(p_value = sum(mean_difference <= difference_actual)/n())
+
+difference_actual <- dat %>% 
+  group_by(condition) %>% 
+  summarize(mean = mean(Behaviors)) %>% 
+  pull(mean) %>% 
+  diff()
+  
+  
+```
+
+
+## Brms ordinal regression
+problem: brms package won't load
+
+##ASK!
+
+```{r}
+dat3 <- dat %>%
+  mutate_at(vars(Behaviors), character) %>% 
+  mutate_at(vars(Behaviors), factor)
+
+
+dat$Behaviors <- as.factor(as.character(dat$Behaviors)) 
+
+
+
+dat %>% 
+  count(Behaviors)
+
+fit.ordinal.complex <- brm(formula = bf(Behaviors ~ 1 + condition + (1 + condition|Vignette)) +
+                     lf(0 + condition, cmc = FALSE), 
+             data = dat3, 
+             family = cumulative(link = "probit"),
+             seed = 1)
+
+dat3$Behaviors <- fct_inseq(dat3$Behaviors)
+str(dat3)
+
+fit.ordinal.simple <- brm(
+                          formula = Behaviors ~ 1 + condition, 
+                          data = dat, 
+                          family = cumulative("probit")
+                          )
+
+fit.ordinal.simple <- brm(formula = Behaviors ~ 1 + condition + cs(Vignette), 
+             data = dat3, 
+             family = acat("probit"))
+```
+
+### Assumptions of ANOVA
+
+Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
+
+```{r}
+# Outlier check
+dat %>%
+  group_by(condition, Vignette) %>%
+  identify_outliers(Behaviors) # Violated. 9 outliers, 2 of them are extreme
+
+# Normality Check 1: Shapiro-Wilk test
+dat %>%
+  group_by(condition, Vignette) %>% # if Normal, p-values are greater than 0.05
+  shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
+
+# Normality Check 2: QQ-Plots (for sample sizes > 50)
+dat %>%
+  ggqqplot("Behaviors", ggtheme = theme_bw()) +
+  facet_grid(condition ~ Vignette) # Violated. Non-normal behavior, since our DV is ordinal  
+
+# Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
+dat %>%
+  group_by(Vignette) %>%
+  levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All have similar variance
+
+dat %>%
+  group_by(condition) %>%
+  levene_test(Behaviors ~ Vignette) 
+
+# Check for Homogeneity of Covariances of between-subject factor (condition)
+box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p < 0.001 so unequal covariances
+
+```
+
+
+### Ordinal Logistic Regression 1
+
+To preview the results of this OLR, significant results under the OLR generally match up with the ANOVA findings. Main effect of condition, Sabotage and interaction are all significant, though p-values for condition and Sabotage are less extreme under the OLR analysis, whereas the p-value for interaction effect is more extreme under the OLR.
+
+```{r}
+
+
+
+#1 - Main effect of condition
+mod1 <- clmm(Behaviors ~ 1 + (1|ResponseId), data = dat3, link = "logit") #mixed cumulative link model
+mod2 <- clmm(Behaviors ~ condition + (1|ResponseId), data = dat3, link = "logit")
+anova(mod1, mod2) #main effect of condition p = 0.047
+
+#2 - Main effect of vignette
+mod3 <- clmm(Behaviors ~ Vignette + (1|ResponseId), data = dat3, link = "logit")
+anova(mod1, mod3) #p = 0.0058
+
+#3 - interaction effect
+mod4 <- clmm(Behaviors ~ condition + Vignette + condition:Vignette + (1|ResponseId), data = dat3, link = "logit")
+mod4b <- clmm(Behaviors ~ condition + Vignette + (1|ResponseId), data = dat3, link = "logit")
+anova(mod4, mod4b) #p = 0.058
+Anova(mod4, type = "2")
+
+
+mod4.test <- clmm(Behaviors ~ condition + Vignette + condition:Vignette + (1|ResponseId), 
+             data = dat3, 
+             threshold = "equidistant")
+Anova(mod4.test, type = "2")
+
+#bayesian analysis 3
+
+mod4.test <- brm(Behaviors ~ condition + Vignette + condition:Vignette + (1|ResponseId), 
+             data = dat3, 
+             threshold = "equidistant")
+
+# Linear mixed effects regression
+lin <- lmer(Behaviors~condition + Vignette + condition*Vignette + (1|ResponseId), data = dat)
+anova(lin) #just to confirm ANOVA results = similar findings
+
+```
+
+# Secondary Analysis 
+
+The primary analysis considered only actual behaviors across condition and sabotage levels. This secondary analysis, on the other hand, will be more comprehensive, considering both actual and deserve behaviors across condition and sabotage levels.
+
+## Exploratory Analyses 2
+
+```{r}
+# boxplot of unethical behaviors across all 3 IVs
+df <- d %>%
+  dplyr::select(ResponseId, condition,
+                deserve.sab1, deserve.sab2, deserve.sab3,
+                actual.sab1, actual.sab2, actual.sab3) %>%
+  pivot_longer(-c("ResponseId", "condition"), names_to = "Key", values_to = "Behaviors") %>% #pivot long then separate
+  separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
+  mutate_at(vars(condition), factor) %>%
+  mutate_at(vars(Kind), factor) %>%
+  mutate_at(vars(Sabotage), factor) 
+
+df %>% 
+  ggplot(aes(x = condition, y = Behaviors,  color = Sabotage)) +
+  geom_boxplot() + 
+  facet_wrap(~Kind)
+
+# boxplot but binned by within-participant variable Sabotage
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
+  geom_boxplot() +
+  facet_wrap(~Kind)
+
+#interaction plot
+df %>%
+interaction.ABC.plot(x.factor = condition, groups.factor = Sabotage, trace.factor = Kind, 
+                        response = Behaviors)
+
+dd2 <- df %>% 
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) 
+
+# point-plot with error-bars 
+dd2 %>% 
+  ggplot(aes(x = condition, y = Mean, group = Sabotage, color = Sabotage)) + 
+  geom_point() +
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~Kind) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), 
+                width=0.2,
+                position = position_dodge(0.01)) 
+
+std <- function(x) sd(x)/sqrt(length(x))
+dodge <- position_dodge(width = 0.9)
+
+
+# barplot of mean unethical behaviors across condition, kind and sabotage
+dd2 %>%
+  ggplot(aes(x = interaction(Kind, condition), y = Mean, fill=Sabotage)) +
+  geom_bar(position=position_dodge(), stat = "identity") +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE), position = dodge, width = 0.2) +
+  annotate("text", x = 1:4, y = - 0.05,
+           label = rep(c("Actual", "Deserve"), 2)) +
+  annotate("text", c(1.5, 3.5), y = -0.2 , label = c("Agency", "Compliance"))  +
+  theme(plot.margin = unit(c(1, 1, 4, 1), "lines"),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        text=element_text(size=12,  family="sans")
+  )
+
+
+#all but without geom smooth
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, group = Kind, color = Kind)) +
+  stat_summary(fun.y = mean,
+               geom = "pointrange") +  
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~condition) 
+
+#all with geom smooth
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, group = Kind, color = Kind)) +
+  stat_summary(fun.y = mean,
+               geom = "pointrange") +  
+  facet_wrap(~condition) +
+  stat_summary(fun.y = mean, geom = "line") +
+  geom_smooth(method = 'lm', se = FALSE)
+
+#all with geom smooth + error bars (bars too large)
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, color = Kind, group = Kind)) +
+  stat_summary(fun.y = mean,
+               fun.ymin = function(x) mean(x) - sd(x), 
+               fun.ymax = function(x) mean(x) + sd(x), 
+               position = dodge, width = 0.2,
+               geom = "pointrange") +  
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~condition) +
+  geom_smooth(method = 'lm', se = FALSE)
+
+```
+
+## Confirmatory Analyses 2
+
+### Assumptions of ANOVA
+
+Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
+
+```{r}
+# Outlier check
+df %>%
+  group_by(condition, Kind, Sabotage) %>%
+  identify_outliers(Behaviors) # Violated. 9 outliers, two of which are extreme
+
+# Normality Check 1: Shapiro-Wilk test
+df %>%
+  group_by(condition, Kind, Sabotage) %>% # if Normal, p-values are greater than 0.05
+  shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
+
+# Normality Check 2: QQ-Plots (for sample sizes > 50)
+df %>%
+  ggqqplot("Behaviors", ggtheme = theme_bw()) +
+  facet_grid(condition ~ Sabotage) # Violated. Highly non-normal behavior - should be linear
+
+# Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
+df %>%
+  group_by(Kind, Sabotage) %>%
+  levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All groups have similar variance
+
+# Check for Homogeneity of Covariances of between-subject factor (condition)
+box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
+
+
+```
+
+### Three-way Mixed Effects Anova
+
+```{r}
+
+three.way <- anova_test(
+  data = df, dv = Behaviors, wid = ResponseId,
+  between = condition, within = c(Kind, Sabotage)
+  )
+get_anova_table(three.way) # There was a statistically significant main effect of Kind and main effect of Sabotage, and interaction effect of Kind and Sabotage. main effect of condition was non-significant.
+
+#============ Post-Hoc Tests =============== ##
+
+# Simple Main Effect of Condition at each Kind and Sabotage level
+## Effect of condition at each sabotage and kind level
+df %>%
+  group_by(Kind, Sabotage) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, between = condition) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, it can be seen that the simple main effect of condition was only significant for sab1 in actual factor (p = 0.012)
+
+## Pairwise comparisons between condition and kind
+df %>%
+  group_by(Kind, Sabotage) %>%
+  pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Similarly, pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison only at Sabotage 1(p = 0.00199).
+
+### Simple Main effects of Sabotage variable 
+# Effect of Sabotage at each level of each factor
+df %>%
+  group_by(Kind, condition) %>%
+  anova_test(dv = Behaviors, wid = ResponseId, within = Sabotage) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of Sabotage on mean Behaviors for actual factor in condition 1 (p = 0.016)
+
+# Pairwise comparisons between condition at each Kind and sabotage levels 
+df %>%
+  group_by(Kind, condition) %>%
+  pairwise_t_test(
+    Behaviors ~ Sabotage, paired = TRUE, 
+    p.adjust.method = "bonferroni"
+    ) %>%
+  dplyr::select(-df, -statistic, -p) #removes details ## Using pairwise paired t-test comparisons, it can be seen that the mean Behaviors were only statistically significantly different between Sabotage 1 and 2(p = 0.005) in condition 1, actual factor
+
+```
+
+### Ordinal Logistic Regression 2
+
+```{r}
+dat4 <- df %>%
+    mutate_at(vars(Behaviors), factor)
+
+#1 - Main effect of condition
+mod1b <- clmm(Behaviors ~ 1 + (1|ResponseId), data = dat4, link = "logit") #mixed cumulative link model
+mod2b <- clmm(Behaviors ~ condition + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod2b) #main effect of condition p = 0.04
+
+#2 - Main effect of Sabotage
+mod3b <- clmm(Behaviors ~ Sabotage + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod3b) #p = 0.0058
+
+#3 - Main effect of Kind
+mod4b <- clmm(Behaviors ~ Kind + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod4b) #p = 0.0058
+
+#4 - interaction effect
+mod5b <- clmm(Behaviors ~ condition*Sabotage + (1|ResponseId), data = dat4, link = "logit")
+anova(mod1b, mod5b) #p = 0.001
+
+# linear mixed effects regression
+linb <- lmer(Behaviors~condition + Kind + Sabotage + condition*Sabotage + condition*Kind + Kind*Sabotage + condition*Kind*Sabotage + (1|ResponseId), data = df)
+anova(linb) #ran linear just to see if similar results to ANOVA > mostly similar
+
+```
+
+# Session info 
+
+Information about this R session including which version of R was used, and what packages were loaded. 
+
+```{r sessinfo}
+sessionInfo()
+```

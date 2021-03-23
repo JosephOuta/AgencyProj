@@ -2,25 +2,14 @@
 title: "Agency_analysis_final"
 author: "Joseph"
 date: "11/4/2020"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
 ---
 
-# Table of Contents
-- [Data preparation](#data-preparation)  
-- [Data wrangling](#data-wrangling)  
-- [Agency exclusions](#agency-exclusions)  
-- [Non-Agency exclusions](#nonagency-exclusions)  
-Primary Analysis:  
-- [Exploratory analyses](#exploratory-analyses-1)  
-- [Confirmatory analysis - Two Way ANOVA](#two-way-mixed-effects-anova)  
-- [Confirmatory analysis - Ordinal Logistic Regression](#ordinal-logistic-regression)   
-Secondary Analysis:   
-- [Exploratory analyses](#exploratory-analyses-2)  
-- [Confirmatory analysis - Three Way ANOVA](#three-way-mixed-effects-anova)  
-- [Confirmatory analysis - Ordinal Logistic Regression](#ordinal-logistic-regression-2)
-
-
-# Data Preparation
+Data Preparation
 
 Load packages
 
@@ -42,6 +31,15 @@ d <- read_csv("agendata.csv")
 
 d <- rename(d, AttnCheck = "Debrief+attend") 
 filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
+#check numbers of exclusions
+# d %>%
+#   dplyr::slice(3:length(d$ResponseId)) %>%
+#   filter(Status==0) %>%
+#   rename(AttnCheck = "Debrief+attend") %>%
+#   dplyr::select(Agency2, NonA2, AttnCheck) %>%
+#   arrange(Agency2) %>% #starts 241. 
+#   filter(!is.na(Agency2)|!is.na(NonA2)) %>% #then 236 (5 excluded)
+#   filter(AttnCheck==5) #then 227 (9 excluded)
 
 ```
 
@@ -49,12 +47,12 @@ filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #ch
 
 ```{r cleaning and wrangling}
 d <- d %>%
-  dplyr::slice(3:length(d$ResponseId)) %>% #remove first 2 rows with title info
+  dplyr::slice(-1, -2) %>% #remove first 2 rows with title info
   filter(Status==0) %>% #Remove Survey Preview rows
   arrange(Agency2) %>% #Arrange data by condition
-  rename(ECNA = "Q51") %>%
-  filter(AttnCheck==5) %>% #Exclude participants who failed attention end-check
-  filter(!is.na(Agency2)|!is.na(NonA2)) %>%  #Exclude participants who left attention manipulation check blank
+  rename(ECNA = "Q51") %>% #241 initial participants
+  filter(AttnCheck==5) %>% #Exclude participants who failed attention end-check (6)
+  filter(!is.na(Agency2)|!is.na(NonA2)) %>%  #Exclude participants who left attn. manipulation checks blank (5)
   convert(num(Sab1_1,Sab1_2, Sab1_3, Sab1_4,Sab1_5,
          Sab1b_1,Sab1b_2,Sab1b_3,Sab1b_4,Sab1b_5,
          Sab2_1,Sab2_2,Sab2_3,Sab2_4,Sab2_5,
@@ -68,37 +66,37 @@ d <- d %>%
          Sab2NAb_1,Sab2NAb_2,Sab2NAb_3,Sab2NAb_4,Sab2NAb_5,
          Sab3NA_1,Sab3NA_2,Sab3NA_3,Sab3NA_4,Sab3NA_5,
          Sab3NAb_1,Sab3NAb_2,Sab3NAb_3,Sab3NAb_4,Sab3NAb_5,
-         ECNA,AttnCheck)) %>%
-  mutate(condition = ifelse(is.na(Agency2),2,1)) %>% #create condition column first
+         ECNA,AttnCheck)) %>% #convert relevant cols from character to numeric
+  mutate(condition = ifelse(is.na(Agency2), "Compliance", "Agency")) %>% #create longform condition label column
   rowwise() %>%
-  mutate(deserve.sab1 = ifelse(condition == 1,
+  mutate(deserve.sab1 = ifelse(condition == "Agency", #create summed columns for each condition && vignette
                               sum(Sab1_1, Sab1_2, Sab1_3, Sab1_4, Sab1_5, na.rm = TRUE),
                               sum(Sab1NA_1, Sab1NA_2, Sab1NA_3, Sab1NA_4, Sab1NA_5, na.rm = TRUE))) %>%
-  mutate(deserve.sab2 = ifelse(condition == 1,
+  mutate(deserve.sab2 = ifelse(condition == "Agency",
                               sum(Sab2_1, Sab2_2, Sab2_3, Sab2_4, Sab2_5, na.rm = TRUE),
                               sum(Sab2NA_1, Sab2NA_2, Sab2NA_3, Sab2NA_4, Sab2NA_5, na.rm = TRUE))) %>%
-  mutate(deserve.sab3 = ifelse(condition == 1,
+  mutate(deserve.sab3 = ifelse(condition == "Agency",
                               sum(Sab3_1, Sab3_2, Sab3_3, Sab3_4, Sab3_5, na.rm = TRUE),
                               sum(Sab3NA_1, Sab3NA_2, Sab3NA_3, Sab3NA_4, Sab3NA_5, na.rm = TRUE))) %>%
   
-  mutate(actual.sab1 = ifelse(condition == 1,
+  mutate(actual.sab1 = ifelse(condition == "Agency",
                               sum(Sab1b_1, Sab1b_2, Sab1b_3, Sab1b_4, Sab1b_5, na.rm = TRUE),
                               sum(Sab1NAb_1, Sab1NAb_2, Sab1NAb_3, Sab1NAb_4, Sab1NAb_5, na.rm = TRUE))) %>%
-  mutate(actual.sab2 = ifelse(condition == 1,
+  mutate(actual.sab2 = ifelse(condition == "Agency",
                               sum(Sab2b_1, Sab2b_2, Sab2b_3, Sab2b_4, Sab2b_5, na.rm = TRUE),
                               sum(Sab2NAb_1, Sab2NAb_2, Sab2NAb_3, Sab2NAb_4, Sab2NAb_5, na.rm = TRUE))) %>%
-  mutate(actual.sab3 = ifelse(condition == 1,
+  mutate(actual.sab3 = ifelse(condition == "Agency",
                               sum(Sab3b_1, Sab3b_2, Sab3b_3, Sab3b_4, Sab3b_5, na.rm = TRUE),
                               sum(Sab3NAb_1, Sab3NAb_2, Sab3NAb_3, Sab3NAb_4, Sab3NAb_5, na.rm = TRUE))) %>%
   dplyr::select(ResponseId, Agency2, NonA2, condition,
                deserve.sab1, deserve.sab2, deserve.sab3,
-               actual.sab1, actual.sab2, actual.sab3)  #select condition and sum columns
+               actual.sab1, actual.sab2, actual.sab3)  #select relevant columns for further analysis 
 
 ```
 
 Attention Exclusions 
 
-### Agency Exclusions 
+## Agency Exclusions 
 
 Excluding based on failed attention responses in Agency condition manipulation check (57 exclusions)
 
@@ -165,7 +163,7 @@ d <- d %>%
 
 ```
 
-### NonAgency Exclusions
+## NonAgency Exclusions
 
 Excluding based on failed responses in Non-Agency condition manipulation check (32 exclusions)
 
@@ -212,26 +210,46 @@ d <- d %>%
          !grepl("my values might conflict with the company's", NonA2) 
   )
 
+
 ```
 
-# Primary Hypothesis 
+# Primary Analysis 
 
 Will increasing agency lead to less retaliatory customer sabotage?
 
 ## Exploratory Analyses 1
 
 ```{r}
-
+####PLOT ALL AND SEPARATE USING FACET WRAP
 # histogram of one of the factors
 d %>%
-  ggplot(aes(x = actual.sab1)) +
-  geom_bar(width = 0.75) +
-  scale_x_continuous(breaks = seq (from = 0, to = 5, by = 1)) 
+  dplyr::select(ResponseId, condition,
+                deserve.sab1, deserve.sab2, deserve.sab3,
+                actual.sab1, actual.sab2, actual.sab3) %>%
+  pivot_longer(-c("ResponseId", "condition"), 
+               names_to = "Key", 
+               values_to = "Behaviors") %>% #pivot long for plotting
+  separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
+  mutate(Vignette = ifelse(Sabotage == 'sab1', 'vign1',
+                           ifelse(Sabotage == 'sab2', 'vign2', 'vign3'))) %>% 
+  filter(Kind == "actual") %>% 
+  ggplot(aes(x = Behaviors, group = factor(condition), fill = factor(condition))) +
+  geom_bar(width = 0.75, position = position_dodge()) +
+  scale_x_continuous(breaks = seq (from = 0, to = 5, by = 1)) +
+  facet_grid(vars(Vignette), vars(condition)) +
+  labs(x = "Number of sabotage behaviors selected",
+       y = "Count",
+       fill = "Condition") +
+  theme(legend.position="none")
 
+```
+
+
+```{r}
 dat <- d %>%
   dplyr::select(ResponseId, condition,
-         deserve.sab1, deserve.sab2, deserve.sab3,
-         actual.sab1, actual.sab2, actual.sab3) %>%
+                deserve.sab1, deserve.sab2, deserve.sab3,
+                actual.sab1, actual.sab2, actual.sab3) %>%
   pivot_longer(-c("ResponseId", "condition"), names_to = "Key", values_to = "Behaviors") %>% #pivot long then separate
   separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
   mutate_at(vars(condition), factor) %>%
@@ -269,13 +287,19 @@ dd %>%
   filter(Kind == "actual") %>%
   ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
   geom_bar(stat="identity", position=position_dodge()) +
-  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2)
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  labs(fill = "Vignette",
+       y = "Mean sabotage behaviors")
+
 
 # point-plot of summary statistics
 dd %>% 
   filter(Kind == "actual") %>%
   ggplot(aes(x = condition, y = Mean, group = Sabotage, color = Sabotage)) + 
-  geom_point() + geom_line() #stat_summary(geom = "line")
+  geom_point() + geom_line() + #stat_summary(geom = "line") 
+  labs(color = "Vignette",
+       y = "Mean sabotage behaviors")
+
 
 # point plot but binned by within-participant variable Sabotage
 dd %>%
@@ -283,46 +307,35 @@ dd %>%
   ggplot(aes(x = Sabotage, y = Mean, group = condition, col = condition)) + 
   geom_point() + geom_line()
 
+# binned by Sabotage but averaged out across condition
+dd %>%
+  filter(Kind == "actual") %>%
+  ggplot(aes(x = Sabotage, y = Mean, group = condition, col = condition)) + 
+  geom_point() + geom_line()
+
+
+#Finally, a point plot with geom jitter to visualize overlapping points
+dat %>%
+  filter(Kind == "actual") %>%
+  ggplot(aes(x = condition, y = Behaviors, group = Sabotage, color = Sabotage)) +
+  geom_point() +
+  geom_jitter(width = 0.3, height = 0.1) +
+  stat_summary(
+    geom = "line",
+    fun.y = "mean",
+    size = 1,
+    fill = "red") +
+  stat_summary(
+    geom = "point",
+    fun.y = "mean",
+    size = 3) +
+  labs(color = "Vignette")
+
 ```
 
 ## Confirmatory Analyses 1
 
 ANOVA and Ordinal Logistic Regression
-
-### Assumptions of ANOVA
-
-Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
-
-```{r}
-# Outlier check
-dat %>%
-  filter(Kind == "actual") %>%
-  group_by(condition, Sabotage) %>%
-  identify_outliers(Behaviors) # Violated. 9 outliers, 2 of them are extreme
-
-# Normality Check 1: Shapiro-Wilk test
-dat %>%
-  filter(Kind == "actual") %>%
-  group_by(condition, Sabotage) %>% # if Normal, p-values are greater than 0.05
-  shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
-
-# Normality Check 2: QQ-Plots (for sample sizes > 50)
-dat %>%
-  filter(Kind == "actual") %>%
-  ggqqplot("Behaviors", ggtheme = theme_bw()) +
-  facet_grid(condition ~ Sabotage) # Violated. Highly non-normal behavior - should be linear
-
-# Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
-dat %>%
-  filter(Kind == "actual") %>%
-  group_by(Sabotage) %>%
-  levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All have similar variance
-
-# Check for Homogeneity of Covariances of between-subject factor (condition)
-box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
-
-```
-
 
 ### Two-way Mixed Effects Anova 
 
@@ -332,6 +345,7 @@ Our two way mixed ANOVA has 3 null hypotheses:
 - No difference in between-group variable (condition)
 - No difference in within group variable (Sabotage)
 - No interaction effect (condition:Sabotage)
+
 
 ```{r}
 dat2 <- dat %>%
@@ -377,6 +391,42 @@ dat2 %>%
 
 ```
 
+
+### Assumptions of ANOVA
+
+Since our DV is a Likert-scale, it is expected that this dataset will violate the assumptions of an ANOVA, since its highly likely that data will not be normally distributed. Below some standard tests were performed to see if our data meets assumptions of two-way ANOVA
+
+```{r}
+# Outlier check
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(condition, Sabotage) %>%
+  identify_outliers(Behaviors) # Violated. 9 outliers, 2 of them are extreme
+
+# Normality Check 1: Shapiro-Wilk test
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(condition, Sabotage) %>% # if Normal, p-values are greater than 0.05
+  shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
+
+# Normality Check 2: QQ-Plots (for sample sizes > 50)
+dat %>%
+  filter(Kind == "actual") %>%
+  ggqqplot("Behaviors", ggtheme = theme_bw()) +
+  facet_grid(condition ~ Sabotage) # Violated. Highly non-normal behavior - should be linear
+
+# Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
+dat %>%
+  filter(Kind == "actual") %>%
+  group_by(Sabotage) %>%
+  levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All have similar variance
+
+# Check for Homogeneity of Covariances of between-subject factor (condition)
+box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
+
+```
+
+
 ### Ordinal Logistic Regression 1
 
 To preview the results of this OLR, significant results under the OLR generally match up with the ANOVA findings. Main effect of condition, Sabotage and interaction are all significant, though p-values for condition and Sabotage are less extreme under the OLR analysis, whereas the p-value for interaction effect is more extreme under the OLR.
@@ -404,7 +454,7 @@ anova(lin) #just to confirm ANOVA results = similar findings
 
 ```
 
-# Secondary Findings 
+# Secondary Analysis 
 
 The primary analysis considered only actual behaviors across condition and sabotage levels. This secondary analysis, on the other hand, will be more comprehensive, considering both actual and deserve behaviors across condition and sabotage levels.
 
@@ -412,23 +462,33 @@ The primary analysis considered only actual behaviors across condition and sabot
 
 ```{r}
 # boxplot of unethical behaviors across all 3 IVs
-dat %>% 
+df <- d %>%
+  dplyr::select(ResponseId, condition,
+                deserve.sab1, deserve.sab2, deserve.sab3,
+                actual.sab1, actual.sab2, actual.sab3) %>%
+  pivot_longer(-c("ResponseId", "condition"), names_to = "Key", values_to = "Behaviors") %>% #pivot long then separate
+  separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
+  mutate_at(vars(condition), factor) %>%
+  mutate_at(vars(Kind), factor) %>%
+  mutate_at(vars(Sabotage), factor) 
+
+df %>% 
   ggplot(aes(x = condition, y = Behaviors,  color = Sabotage)) +
   geom_boxplot() + 
   facet_wrap(~Kind)
 
 # boxplot but binned by within-participant variable Sabotage
-dat %>%
-   ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors,  color = condition)) +
   geom_boxplot() +
   facet_wrap(~Kind)
 
 #interaction plot
-dat %>%
+df %>%
 interaction.ABC.plot(x.factor = condition, groups.factor = Sabotage, trace.factor = Kind, 
                         response = Behaviors)
 
-dd2 <- dat %>% 
+dd2 <- df %>% 
   group_by(condition, Kind, Sabotage) %>%
   summarize(Mean = mean(Behaviors), 
             SE = std(Behaviors)) 
@@ -461,6 +521,36 @@ dd2 %>%
         text=element_text(size=12,  family="sans")
   )
 
+
+#all but without geom smooth
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, group = Kind, color = Kind)) +
+  stat_summary(fun.y = mean,
+               geom = "pointrange") +  
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~condition) 
+
+#all with geom smooth
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, group = Kind, color = Kind)) +
+  stat_summary(fun.y = mean,
+               geom = "pointrange") +  
+  facet_wrap(~condition) +
+  stat_summary(fun.y = mean, geom = "line") +
+  geom_smooth(method = 'lm', se = FALSE)
+
+#all with geom smooth + error bars (bars too large)
+df %>%
+  ggplot(aes(x = Sabotage, y = Behaviors, color = Kind, group = Kind)) +
+  stat_summary(fun.y = mean,
+               fun.ymin = function(x) mean(x) - sd(x), 
+               fun.ymax = function(x) mean(x) + sd(x), 
+               position = dodge, width = 0.2,
+               geom = "pointrange") +  
+  stat_summary(fun.y = mean, geom = "line") +
+  facet_wrap(~condition) +
+  geom_smooth(method = 'lm', se = FALSE)
+
 ```
 
 ## Confirmatory Analyses 2
@@ -471,27 +561,28 @@ Since our DV is a Likert-scale, it is expected that this dataset will violate th
 
 ```{r}
 # Outlier check
-dat %>%
+df %>%
   group_by(condition, Kind, Sabotage) %>%
   identify_outliers(Behaviors) # Violated. 9 outliers, two of which are extreme
 
 # Normality Check 1: Shapiro-Wilk test
-dat %>%
+df %>%
   group_by(condition, Kind, Sabotage) %>% # if Normal, p-values are greater than 0.05
   shapiro_test(Behaviors) # Violated. All p-values are very low meaning data is non-normal. 
 
 # Normality Check 2: QQ-Plots (for sample sizes > 50)
-dat %>%
+df %>%
   ggqqplot("Behaviors", ggtheme = theme_bw()) +
   facet_grid(condition ~ Sabotage) # Violated. Highly non-normal behavior - should be linear
 
 # Check for Homogeneity of Variance assumption of btn-subject factor (condition), at each within-subject level
-dat %>%
+df %>%
   group_by(Kind, Sabotage) %>%
   levene_test(Behaviors ~ condition) # there is HOV since Levene's p-values>0.05. All groups have similar variance
 
 # Check for Homogeneity of Covariances of between-subject factor (condition)
 box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 which is > 0.001 so we have equal covariances
+
 
 ```
 
@@ -500,7 +591,7 @@ box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 w
 ```{r}
 
 three.way <- anova_test(
-  data = dat, dv = Behaviors, wid = ResponseId,
+  data = df, dv = Behaviors, wid = ResponseId,
   between = condition, within = c(Kind, Sabotage)
   )
 get_anova_table(three.way) # There was a statistically significant main effect of Kind and main effect of Sabotage, and interaction effect of Kind and Sabotage. main effect of condition was non-significant.
@@ -509,27 +600,27 @@ get_anova_table(three.way) # There was a statistically significant main effect o
 
 # Simple Main Effect of Condition at each Kind and Sabotage level
 ## Effect of condition at each sabotage and kind level
-dat %>%
+df %>%
   group_by(Kind, Sabotage) %>%
   anova_test(dv = Behaviors, wid = ResponseId, between = condition) %>%
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni") # Considering the Bonferroni adjusted p-value, it can be seen that the simple main effect of condition was only significant for sab1 in actual factor (p = 0.012)
 
 ## Pairwise comparisons between condition and kind
-dat %>%
+df %>%
   group_by(Kind, Sabotage) %>%
   pairwise_t_test(Behaviors ~ condition, p.adjust.method = "bonferroni") # Similarly, pairwise comparisons show that the mean Behaviors were significantly different in condition 1 vs condition 2 comparison only at Sabotage 1(p = 0.00199).
 
 ### Simple Main effects of Sabotage variable 
 # Effect of Sabotage at each level of each factor
-dat %>%
+df %>%
   group_by(Kind, condition) %>%
   anova_test(dv = Behaviors, wid = ResponseId, within = Sabotage) %>%
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni") # There was a statistically significant effect of Sabotage on mean Behaviors for actual factor in condition 1 (p = 0.016)
 
 # Pairwise comparisons between condition at each Kind and sabotage levels 
-dat %>%
+df %>%
   group_by(Kind, condition) %>%
   pairwise_t_test(
     Behaviors ~ Sabotage, paired = TRUE, 
@@ -538,10 +629,11 @@ dat %>%
   dplyr::select(-df, -statistic, -p) #removes details ## Using pairwise paired t-test comparisons, it can be seen that the mean Behaviors were only statistically significantly different between Sabotage 1 and 2(p = 0.005) in condition 1, actual factor
 
 ```
+
 ### Ordinal Logistic Regression 2
 
 ```{r}
-dat4 <- dat %>%
+dat4 <- df %>%
     mutate_at(vars(Behaviors), factor)
 
 #1 - Main effect of condition
@@ -562,7 +654,7 @@ mod5b <- clmm(Behaviors ~ condition*Sabotage + (1|ResponseId), data = dat4, link
 anova(mod1b, mod5b) #p = 0.001
 
 # linear mixed effects regression
-linb <- lmer(Behaviors~condition + Kind + Sabotage + condition*Sabotage + condition*Kind + Kind*Sabotage + condition*Kind*Sabotage + (1|ResponseId), data = dat)
+linb <- lmer(Behaviors~condition + Kind + Sabotage + condition*Sabotage + condition*Kind + Kind*Sabotage + condition*Kind*Sabotage + (1|ResponseId), data = df)
 anova(linb) #ran linear just to see if similar results to ANOVA > mostly similar
 
 ```

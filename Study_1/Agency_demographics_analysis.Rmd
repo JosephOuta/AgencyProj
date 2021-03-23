@@ -1,0 +1,635 @@
+---
+title: "Agency demographic analysis"
+author: "Joseph"
+date: "12/16/2020"
+output: html_document
+---
+
+# Data Preparation
+
+Load packages
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+
+library(tidyverse) # for data munging
+library(knitr) 
+library(rstatix)
+library(ggpubr)
+library(lme4)
+library(lmerTest)
+library(MASS) #for regression. #masks select from rstatix and dplyr...so specify using dplyr::select
+library(hablar) #you need this for batch-converting to numeric
+library(dae)
+library(ordinal) #for clmm regression
+
+d <- read_csv("agendata.csv")
+
+d <- dplyr::rename(d, AttnCheck = "Debrief+attend") 
+filter(d, AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6
+
+names(d)
+
+```
+
+
+# Data Wrangling
+
+```{r cleaning and wrangling}
+d <- d %>%
+  dplyr::slice(3:length(d$ResponseId)) %>% #remove first 2 rows with title info
+  dplyr::filter(Status==0) %>% #Remove Survey Preview rows
+  arrange(Agency2) %>% #Arrange data by condition
+  dplyr::rename(ECNA = "Q51") %>%
+  dplyr::filter(AttnCheck==5) %>% #Exclude participants who failed attention end-check
+  dplyr::filter(!is.na(Agency2)|!is.na(NonA2)) %>%  #Exclude participants who left attention manipulation check blank
+  hablar::convert(num(Sab1_1,Sab1_2, Sab1_3, Sab1_4,Sab1_5,
+         Sab1b_1,Sab1b_2,Sab1b_3,Sab1b_4,Sab1b_5,
+         Sab2_1,Sab2_2,Sab2_3,Sab2_4,Sab2_5,
+         Sab2b_1,Sab2b_2,Sab2b_3,Sab2b_4,Sab2b_5,
+         Sab3_1,Sab3_2,Sab3_3,Sab3_4,Sab3_5,
+         Sab3b_1,Sab3b_2,Sab3b_3,Sab3b_4,Sab3b_5,
+         EC,
+         Sab1NA_1,Sab1NA_2,Sab1NA_3,Sab1NA_4,Sab1NA_5,
+         Sab1NAb_1,Sab1NAb_2,Sab1NAb_3,Sab1NAb_4,Sab1NAb_5,
+         Sab2NA_1,Sab2NA_2,Sab2NA_3,Sab2NA_4,Sab2NA_5,
+         Sab2NAb_1,Sab2NAb_2,Sab2NAb_3,Sab2NAb_4,Sab2NAb_5,
+         Sab3NA_1,Sab3NA_2,Sab3NA_3,Sab3NA_4,Sab3NA_5,
+         Sab3NAb_1,Sab3NAb_2,Sab3NAb_3,Sab3NAb_4,Sab3NAb_5,
+         ECNA,AttnCheck)) %>% #convert from character to numeric
+  mutate(condition = ifelse(is.na(Agency2),2,1)) %>% #create longform condition label column
+  rowwise() %>%
+  mutate(deserve.sab1 = ifelse(condition == 1, #create columns for each condition 
+                              sum(Sab1_1, Sab1_2, Sab1_3, Sab1_4, Sab1_5, na.rm = TRUE),
+                              sum(Sab1NA_1, Sab1NA_2, Sab1NA_3, Sab1NA_4, Sab1NA_5, na.rm = TRUE))) %>%
+  mutate(deserve.sab2 = ifelse(condition == 1,
+                              sum(Sab2_1, Sab2_2, Sab2_3, Sab2_4, Sab2_5, na.rm = TRUE),
+                              sum(Sab2NA_1, Sab2NA_2, Sab2NA_3, Sab2NA_4, Sab2NA_5, na.rm = TRUE))) %>%
+  mutate(deserve.sab3 = ifelse(condition == 1,
+                              sum(Sab3_1, Sab3_2, Sab3_3, Sab3_4, Sab3_5, na.rm = TRUE),
+                              sum(Sab3NA_1, Sab3NA_2, Sab3NA_3, Sab3NA_4, Sab3NA_5, na.rm = TRUE))) %>%
+  
+  mutate(actual.sab1 = ifelse(condition == 1,
+                              sum(Sab1b_1, Sab1b_2, Sab1b_3, Sab1b_4, Sab1b_5, na.rm = TRUE),
+                              sum(Sab1NAb_1, Sab1NAb_2, Sab1NAb_3, Sab1NAb_4, Sab1NAb_5, na.rm = TRUE))) %>%
+  mutate(actual.sab2 = ifelse(condition == 1,
+                              sum(Sab2b_1, Sab2b_2, Sab2b_3, Sab2b_4, Sab2b_5, na.rm = TRUE),
+                              sum(Sab2NAb_1, Sab2NAb_2, Sab2NAb_3, Sab2NAb_4, Sab2NAb_5, na.rm = TRUE))) %>%
+  mutate(actual.sab3 = ifelse(condition == 1,
+                              sum(Sab3b_1, Sab3b_2, Sab3b_3, Sab3b_4, Sab3b_5, na.rm = TRUE),
+                              sum(Sab3NAb_1, Sab3NAb_2, Sab3NAb_3, Sab3NAb_4, Sab3NAb_5, na.rm = TRUE))) %>%
+  dplyr::rename(age = "Age_1",
+         gender = "Gender",
+         ethnic_hisp = "Ethnic",
+         ethnic = "Ethnic_1",
+         income = "Income",
+         pol_econ = "Politics",
+         pol_soc = "Politics_1") %>%
+  dplyr::select(ResponseId, Agency2, NonA2, condition,
+               deserve.sab1, deserve.sab2, deserve.sab3,
+               actual.sab1, actual.sab2, actual.sab3, 
+               age, gender, ethnic, ethnic_hisp, income, pol_econ, pol_soc, Edu)  #select relevant columns for further analysis
+```
+
+Attention Exclusions 
+
+### Agency Exclusions 
+
+Excluding based on failed attention responses in Agency condition manipulation check (57 exclusions)
+
+```{r}
+d <- d %>%
+  dplyr::filter( # Exclusion 2: exclude failed condition 1 Attention Check
+       !grepl("5", Agency2),
+       # CODER 1 - JOSEPH OUTA
+       !grepl("Balancing the Company's Needs and Employee Satisfaction", Agency2), #page 1
+       !grepl("Based on the company values or mission statement", Agency2),
+       !grepl("By the value", Agency2),
+       !grepl("Company decisions should be based on values", Agency2),
+       !grepl("Decisions will be all over the place and inconsistent.", Agency2),
+       !grepl("Employees should make decisions based on values.", Agency2), #page 2 of preview
+       !grepl("Employees should keep the big picture in mind. Not ever customer will be the same and they must respect them and handle them in a friendly manner.", Agency2), # page 3
+       !grepl("Focus on customer care and well-being", Agency2), # page 4
+       !grepl("It treats the costumer with professionalism", Agency2),  
+       !grepl("Quality and respect", Agency2), #page 5
+       !grepl("quickly and confidently", Agency2),
+       !grepl("should make them respectfully and fairly", Agency2), #page 7
+       !grepl("That they should do them with the best interests of the company in mind", Agency2),
+       !grepl("They respect there policy", Agency2), #page 8
+       !grepl("They should make decisions that the company would approve of and they themselves would approve of.", Agency2),
+       !grepl("They should think about your value as a pets", Agency2), #page 9
+       !grepl("They should try to be more friendly towards customers.", Agency2),
+       !grepl("to serve the customer best", Agency2), #page 10
+       !grepl("Treat customers in professional and friendly manner", Agency2),
+       !grepl("treat employees well", Agency2),
+       !grepl("Treat the customers well.", Agency2),
+       !grepl("yes", Agency2), #page 11
+       
+       # CODER 2 - YUEL LI ADDITIONAL EXCLUSIONS
+       !grepl("Allows customers to make company decisions", Agency2),
+       !grepl("By working together", Agency2),
+       !grepl("Employees of SerVest should be mindful of the different value's their customers might have.", Agency2),
+       !grepl("Employees should make company decisions based on the values the company at large has, not their own.", Agency2),
+       !grepl("Employees should make company decisions taking into account customer values.", Agency2),
+       !grepl("Employees should make company decisions with the customer's best interest in mind. All decisions should benefit the customer first.", Agency2),
+       !grepl("employees should make the best decisions for the customers", Agency2),
+       !grepl("Employees should work together to make decisions.", Agency2),
+       !grepl("Following their guidelines", Agency2),
+       !grepl("How to best serve their interests.", Agency2),
+       !grepl("I believe that when the company encourages people who do not agree with their beliefs to find another place to be serviced, it gives the employees more power to say who can and cannot shop there.", Agency2),
+       !grepl("In a professional and caring manner", Agency2),
+       !grepl("Sarvest trusts its employees to make good decisions", Agency2),
+       !grepl("Servest relies on employees making good choices.", Agency2),
+       !grepl("SerVest understands that company values vary and they trust companies to make their own decisions that reflect those.", Agency2),
+       !grepl("That the company has certain values and also employees should also have those values and their own", Agency2),
+       !grepl("They respect there policy", Agency2),
+       !grepl("They should accomidate the customer's values", Agency2),
+       !grepl("They should make decisions that the company would approve of and they themselves would approve of.", Agency2),
+       !grepl("They should make decisions with the customers in mind", Agency2),
+       !grepl("They should put customer service first.", Agency2),
+       !grepl("They should reflect customer values", Agency2),
+       !grepl("they take in mind what customers say", Agency2),
+       !grepl("to reflect customer's beliefs", Agency2),
+       !grepl("trust employee to make decisions that will reflect positively on the company", Agency2),
+       !grepl("values reflect the work culture", Agency2),
+       !grepl("with consideration of the customer needs", Agency2),
+       !grepl("With morals & sincerity. SerVest trusts the employees", Agency2),
+       !grepl("with the customer in mind", Agency2),
+       !grepl("with the upmost integrity", Agency2)
+       )
+
+```
+
+### NonAgency Exclusions
+
+Excluding based on failed responses in Non-Agency condition manipulation check (32 exclusions)
+
+```{r}
+
+d <- d %>%
+  dplyr::filter(# CODER 1 - JOSEPH OUTA
+         !grepl("By keeping a good relationship with the customer- honesty and respect.", NonA2), #page 1
+         !grepl("Company decisions are basically based in how they treat their cliental.", NonA2),
+         !grepl("Decisions should be made in a way that will serve the customers better", NonA2),
+         !grepl("Do not understand the question", NonA2),
+         !grepl("Employees should share their knowledge with others", NonA2),# page 3
+         !grepl("employess should be involved with company decisions since everyone has different opinions", NonA2), #page 4
+         !grepl("Ethical decisions", NonA2),
+         !grepl("I cannot remember", NonA2),
+         !grepl("im not aware", NonA2),
+         !grepl("It denotes professionalism that isn't swayed by the person in charge's own views.", NonA2),
+         !grepl("It says that Servest understands there are different personal values and trusts that those values will be reflected by you in the company.", NonA2),
+         !grepl("iT SHOULD BE REAL", NonA2), #page 5
+         !grepl("make them as a good decision", NonA2),
+         !grepl("my values might clash with company values", NonA2),
+         !grepl("Of course, they should think carefully and make a good decision", NonA2), #page 7
+         !grepl("Of course, they should think carefully and make a good decision.", NonA2),
+         !grepl("ok", NonA2),
+         !grepl("SerVest does not discriminate.", NonA2), #page 8
+         !grepl("should keep customer in mind", NonA2),
+         !grepl("Should not use company's beliefs as part of personality", NonA2),
+         !grepl("They are respectful and pay close attention to detail", NonA2), #page 9
+         !grepl("they say you put the emotions of the customer into consideration", NonA2),
+         !grepl("They should think about the customer more than themselves.", NonA2),#page 10
+         !grepl("to the best", NonA2), #page 11
+         !grepl("Trust themselves to not let their values be swayed", NonA2),
+         !grepl("Value your privacy and your opinions.", NonA2),
+         !grepl("varies", NonA2),
+         !grepl("Vary depending on customer values", NonA2), #page 12
+         !grepl("with responsibility", NonA2),
+         !grepl("You should decide what to do", NonA2),
+         
+         # CODER 2 - YUE LI ADDITIONAL EXCLUSIONS
+         !grepl("Employees Should be able to make their own decisions", NonA2),
+         !grepl("information technogy company", NonA2),
+         !grepl("It's Information Technogy", NonA2),
+         !grepl("Like many companies, SerVest is committed to making sure customers are treated in a professional, friendly, and patient manner.", NonA2),
+         !grepl("my values might conflict with the company's", NonA2) 
+  )
+```
+
+# Demographic breakdown
+
+```{r}
+d %>% 
+  mutate(ethnicity = ifelse(ethnic == 1, "white", 
+                            ifelse(ethnic == 2, "black", 
+                                   ifelse(ethnic == 3, "nativeam", 
+                                          ifelse(ethnic == 4, "asian", 
+                                                 ifelse(ethnic == 5, "nativehawaii", "other")))))) %>% 
+  group_by(ethnicity) %>% 
+  summarize(n = n(),
+            prop = n()/148) %>% 
+  arrange(desc(n))
+
+d %>% 
+  mutate(hispanicity = ifelse(ethnic_hisp == 1, "hispanic", "other")) %>% 
+  group_by(hispanicity) %>%
+  summarize(n = n(),
+            prop = n()/148)
+
+d %>% 
+  group_by(Edu) %>% 
+  summarize(n = n(),
+            prop = n()/148)
+```
+
+
+
+  
+```
+
+# Age 
+
+
+```{r}
+
+
+range(d$age)
+
+dat <- d %>%
+  dplyr::select(-Agency2, -NonA2) %>%
+  pivot_longer(-c("ResponseId", "condition", "age", "gender", "ethnic", "ethnic_hisp", "income", "pol_econ", "pol_soc"), names_to = "Key", values_to = "Behaviors") %>% #pivot long then separate
+  separate(Key, c("Kind", "Sabotage")) %>% # splits Key into kind and sabotage 
+  mutate_at(vars(condition), factor) %>%
+  mutate_at(vars(Kind), factor) %>%
+  mutate_at(vars(Sabotage), factor) 
+
+dat_age <- dat %>% #create age categories
+  mutate(age_grp = ifelse(age >= 60, "over_60", 
+                          ifelse(age >= 50, "50s", 
+                                 ifelse(age >= 40, "40s", 
+                                        ifelse(age >= 30, "30s", 
+                                               ifelse(age >= 18, "20s"))))))
+
+#Visualize age count in each condition
+dat_age %>%
+  group_by(condition, age_grp) %>%
+  summarize(n = n()) %>%
+  ggplot(aes(age_grp, n, fill = condition)) + geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label = n), position = position_dodge(width=0.9), vjust = -0.25) # summary stats for high ages will probably have high variance due to small ns
+
+std <- function(x) sd(x)/sqrt(length(x))
+dodge <- position_dodge(width = 0.9)
+
+#visualize age differences in behaviors across condition
+dat_age %>%
+  filter(Kind == "actual") %>%
+  group_by(age_grp, condition) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  ggplot(aes(x=age_grp, y=Mean, fill=condition)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2)
+
+# Data manipulation for visualizing all factors binned by age group ======#
+dat_over_60 <- dat_age %>%
+  filter(age_grp == "over_60") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_50s <- dat_age %>%
+  filter(age_grp == "50s") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_40s <- dat_age %>%
+  filter(age_grp == "40s") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_30s <- dat_age %>%
+  filter(age_grp == "30s") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_20s <- dat_age %>%
+  filter(age_grp == "20s") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_over_60$group <- "over_60"
+dat_50s$group <- "50s"
+dat_40s$group <- "40s"
+dat_30s$group <- "30s"
+dat_20s$group <- "20s"
+
+age_grp_data <- rbind(dat_over_60, dat_50s, dat_40s, dat_30s, dat_20s)
+  
+#create separate bar chart for each age group
+age_grp_data %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group) #no meaningful differences across condition and sabotage for 40+, but yes for below 40s 
+
+
+```
+
+
+```{r}
+
+dat
+
+```
+
+
+# Political Orientation - binary categories
+
+Political orientation was measured via a 7-point Likert scale. We classified 1-4 as (conservative) and 5 - 7 as (liberal). This criteria was chosen due to the relatively low number of 1 - 4s so this would help balance the sample size between the two political groups for a more meaningful visualization.
+
+## Social issues 
+
+```{r}
+
+soc_libdata <- dat %>% #social liberals
+  filter(pol_soc > 4) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+soc_consdata <- dat %>% #social conservatives
+  filter(pol_soc <= 4) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+soc_libdata$group <- "soc_liberals"
+soc_consdata$group <- "soc_conservatives"
+soc_poldata <- rbind(soc_libdata, soc_consdata)
+
+soc_poldata %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group)
+
+```
+
+## Economic issues
+
+
+```{r}
+#NB: the 4's are the moderates so we didn't include them
+
+econ_libdata <- dat %>% #economic liberals
+  filter(pol_econ > 4) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+econ_consdata <- dat %>% #economic conservatives
+  filter(pol_econ <= 4) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+econ_libdata$group <- "econ_liberals"
+econ_consdata$group <- "econ_conservatives"
+econ_poldata <- rbind(econ_libdata, econ_consdata)
+
+econ_poldata %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group)
+
+```
+
+## Combined social and economic
+
+(not particularly the best visualizations)
+
+```{r}
+###All together
+soc_poldata$super.group <- "social_issues"
+econ_poldata$super.group <- "economic_issues"
+combined_poldata <- rbind(soc_poldata, econ_poldata)
+
+
+combined_poldata %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_grid(super.group ~ group)
+
+combined_poldata %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(super.group ~ group)
+
+
+```
+(DO THE COUNTS, HOW MANY NUMBERS ARE IN THE DATA)
+
+
+
+# Political Orientation - 7 categories
+
+Rememebr that political values were measured on a scale from 1 to 7. We can plot all 7 categories by using a linear model which will treat the variable as CTS. Since it's hard to tell differences between groups on a linear model, we will run multiple ANOVAs on the linear model to evaluate group differences. 
+
+```{r}
+# linear model of political views
+dat <- dat %>%
+  convert(num(age, gender, ethnic, ethnic_hisp, income, pol_econ, pol_soc)) %>%
+  mutate(pol = rowMeans(dplyr::select(., pol_econ:pol_soc)))
+
+dat %>%
+  filter(Kind == "actual") %>%
+  filter(Sabotage == "sab1") %>%
+  ggplot(mapping = aes(x = pol, y = Behaviors, color = condition)) + 
+  geom_smooth(method = "lm", se = TRUE, fullrange = TRUE) 
+
+# NB: 1 is very conservative, 7 is very liberal. Liberals engage in less harm. Strongest effect among soxially progressive views. 
+
+dat_lm <- dat %>%
+  filter(Kind == "actual") %>%
+  filter(Sabotage == "sab1") 
+  
+#anova for sabotage 1 in actual ================#
+anova(lm(formula = Behaviors ~ pol_soc * condition, 
+         data = dat_lm)) #only significant for condition
+ 
+anova(lm(formula = Behaviors ~ pol_econ * condition, 
+         data = dat_lm)) #only significant for condition
+
+#anova for all ================#
+anova(lm(formula = Behaviors ~ pol_soc * condition, 
+         data = dat)) #only significant for condition
+ 
+anova(lm(formula = Behaviors ~ pol_econ * condition, 
+         data = dat)) #significant for both condition and pol.econ
+
+#anova for just actuals ================#
+dat_ac <- dat %>%
+  filter(Kind == "actual")
+
+anova(lm(formula = Behaviors ~ pol_soc * condition, 
+         data = dat_ac)) #significant for both so and condition
+ 
+anova(lm(formula = Behaviors ~ pol_econ * condition, 
+         data = dat_ac)) #not significant
+
+## USING COMPOSITE SCORES
+anova(lm(formula = Behaviors ~ pol * condition, 
+         data = dat)) #not significant
+ 
+```
+
+# Gender
+
+```{r}
+
+count(dat, gender) #1 male, 2 female, 3 other
+
+maldata <- dat %>% 
+  filter(gender == 1) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+femdata <- dat %>% 
+  filter(gender == 2) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+maldata$group <- "males"
+femdata$group <- "females"
+gendata <- rbind(maldata, femdata)
+
+gendata %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group)
+
+#hard to distinguish extremes. 
+```
+# Income
+
+Measure of combined annual household income
+
+```{r}
+count(dat, income)
+
+dat_1 <- dat %>%
+  mutate(income_cat = ifelse(income >= 7, "upper", ifelse(income >= 4, "middle", ifelse(income >= 1, "lower", "null"))))
+
+lowdata <- dat_1 %>% 
+  filter(income_cat == "lower") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+middata <- dat_1 %>% 
+  filter(income_cat == "middle") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+uppdata <- dat_1 %>% 
+  filter(income_cat == "upper") %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+lowdata$group <- "lower_bracket (<49,000)"
+middata$group <- "middle_bracket (50,000-79,999)"
+uppdata$group <- "upper_bracket (80,000+)"
+income_data <- rbind(lowdata, middata, uppdata)
+
+income_data %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group)
+```
+
+# Race/Ethnicity
+
+```{r}
+#Ethnicity data is only meaningful for white, blank and native american. No meaningful data for asian (1 person) and the other catgories. 
+dat_hisp <- dat %>%
+  filter(ethnic_hisp == 1) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_white <- dat %>%
+  filter(ethnic == 1) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_black <- dat %>%
+  filter(ethnic == 2) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_nativeam <- dat %>%
+  filter(ethnic == 3) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_asian <- dat %>%
+  filter(ethnic == 4) %>%
+  group_by(condition, Kind, Sabotage) %>%
+  summarize(Mean = mean(Behaviors), 
+            SE = std(Behaviors)) %>%
+  filter(Kind == "actual") 
+
+dat_hisp$group <- "hispanic/latinx"
+dat_white$group <- "white/euro-am"
+dat_black$group <- "black/afric-am"
+dat_nativeam$group <- "native-am"
+dat_asian$group <- "asian/asian-am"
+
+
+ethnicity_data <- rbind(dat_hisp, dat_white, dat_black, dat_asian, dat_nativeam)
+  
+ethnicity_data %>%
+  ggplot(aes(x=condition, y=Mean, fill=Sabotage)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymax = Mean + SE, ymin = Mean - SE),  position = dodge, width = 0.2) +
+  facet_wrap(~group)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
