@@ -14,33 +14,31 @@ library(lme4)
 library(performance) #for running check_model
 library(see) #to visualize check model
 
-df.raw <- read_csv("Data/pilot.csv")
+df.raw <- read_csv("Data/followup.csv")
 
 names(df.raw)
 
 df.raw %>% 
   rename(AttnCheck = "Debrief+attend") %>% 
-  filter(AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 6 
+  filter(AttnCheck == 1 | AttnCheck == 2 | AttnCheck == 3 | AttnCheck == 4) #check who failed attn end check = 
 
 #check numbers of exclusions
-df.raw %>%
+df.raw %>% #starts 248
   dplyr::slice(3:length(df.raw$ResponseId)) %>%
   filter(Status==0) %>% #1 are preview rows
   rename(AttnCheck = "Debrief+attend") %>%
   dplyr::select(Agency2, NonA2, AttnCheck) %>%
-  arrange(Agency2) %>% #starts 241.
-  filter(!is.na(Agency2)|!is.na(NonA2)) %>% 
-  filter(AttnCheck==5) #then 227 (9 excluded)
+  arrange(Agency2) %>% #goes to 245
+  filter(!is.na(Agency2)|!is.na(NonA2)) %>% #goes to 235 (10 filtered out)
+  filter(AttnCheck==5) #down to 218 (17 filtered out)
 
 names(df.raw)
 ```
 
 
-# NB: FIX THE NAMES OF COLUMNS LIKE DEBRIEF+ATTEND, ECNS BEFORE RUNNING STUDY
 
 # Wrangle
 
-## HERE I COMBINED GOOD AND BAD RESPONSES. IN THE FUTURE I HAVE TO SEPARATE THEM
 
 ```{r}
 
@@ -184,6 +182,14 @@ df.raw <- df.raw %>%
     "NA.deserve_3:pro3" = NA.deserve_3h,
     "NA.deserve_3:pro4" = NA.deserve_3i,
     "NA.deserve_3:pro5" = NA.deserve_3j,
+    
+    #Reasons
+    "NA.RsnAnti_1" = NA.reasons_1anti,   
+    "NA.RsnPro_1" = NA.reasons_1pro,  
+    "NA.RsnAnti_2" = NA.reasons_2anti,  
+    "NA.RsnPro_2" = NA.reasons_2pro,   
+    "NA.RsnAnti_3" = NA.reasons_3anti,  
+    "NA.RsnPro_3" = NA.reasons_3pro,  
   )
 ```
 
@@ -192,8 +198,11 @@ df.raw <- df.raw %>%
 
 df.wrangled <- df.raw %>% 
   slice(-1, -2) %>% 
+  rename(AttnCheck = "Debrief+attend") %>% 
   dplyr::filter(Status==0) %>% #remove survey previews
   dplyr::filter(Finished==1) %>% #remove unfinished responses
+  filter(!is.na(Agency2)|!is.na(NonA2)) %>% #goes to 235 (10 filtered out)
+  filter(AttnCheck==5) %>% #remove failred attn checks
   retype() %>% 
   mutate(condition = ifelse(is.na(Agency2), "Compliance", "Agency")) %>% 
   mutate(actual_vign1.anti = ifelse(condition == "Agency",
@@ -286,8 +295,59 @@ fit.augmented <- lmer(behaviors ~ condition*type + (1|ResponseId) + (1 + vignett
   
 ```
 
-```{r}
+Reasons
 
+```{r}
+names(df.wrangled)
+
+#agency reasons
+#Anti
+df.wrangled %>% 
+  filter(!is.na(Agency2)) %>% 
+  select(starts_with("A.actual")) %>% #122
+  na.omit() %>% 
+  #select(starts_with("A.deserve")) #122
+  select(starts_with("A.actualRsnAnti")) %>% 
+  na.omit()
+
+#Pro
+df.wrangled %>% 
+  filter(!is.na(Agency2)) %>% 
+  select(starts_with("A.actual")) %>% #122
+  na.omit() %>% 
+  #select(starts_with("A.deserve")) #122
+  select(starts_with("A.actualRsnPro")) %>% 
+  na.omit()
+
+  
+# Non-Agency reasons
+#Anti
+df.wrangled %>% 
+  filter(!is.na(NonA2)) %>% 
+  #select(starts_with("NA.actual")) %>% #122
+  #na.omit()
+  #select(starts_with("A.deserve")) #122
+  select(starts_with("NA.RsnAnti")) %>% 
+  na.omit()
+
+#Pro
+df.wrangled %>% 
+  filter(!is.na(NonA2)) %>% 
+  #select(starts_with("NA.actual")) %>% #122
+  #na.omit()
+  #select(starts_with("A.deserve")) #122
+  select(starts_with("NA.RsnPro")) %>% 
+  na.omit()
+  
+
+
+```
+
+Likert averages
+We have to somehow tie likert averages to the reasons. So we know what responses someone's reasons are referring to
+
+```{r}
+names(df.wrangled)
 
 ```
 

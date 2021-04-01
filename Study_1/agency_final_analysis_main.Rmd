@@ -17,6 +17,7 @@ Load packages
 library(tidyverse) # for data munging
 library(rstatix) #for posthoc tests
 library(lme4)
+library(ggpubr) #for ggqqplot
 library(lmerTest)
 library(MASS) #for regression. #masks select from rstatix and dplyr
 library(hablar) #for batch-converting to numeric
@@ -333,7 +334,7 @@ dat %>%
 
 ANOVA and Ordinal Logistic Regression
 
-### Two-way Mixed Effects Anova 
+### Two-way Mixed Anova 
 
 Since normality appears to be violated, we will conduct a two-way ANOVA anyway, then we will also conduct an ordinal logistic regression to see if results hold. Moreover, linear tests aren't as sensitive to  normality assumptions as they are to homogeneity of variance assumptions. Since the data passed the homogeneity test, it makes sense to proceed with both an ANOVA and a regression.
 
@@ -582,7 +583,7 @@ box_m(dat[, "Behaviors", drop = FALSE], dat$condition) # Box's M test p = 0.09 w
 
 ```
 
-### Three-way Mixed Effects Anova
+### Three-way Mixed Anova
 
 ```{r}
 
