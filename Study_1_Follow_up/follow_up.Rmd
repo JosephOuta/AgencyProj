@@ -9,14 +9,14 @@ Setup
 
 ```{r setup, include=FALSE}
 library(tidyverse) # for data munging
-library(hablar) #you need this for batch-converting to numeric
+library(hablar) #for batch-converting to numeric
 library(lme4)
 library(performance) #for running check_model
 library(see) #to visualize check model
+library(afex) #for aov_ez() anova
+library(emmeans) #for pairwise comparisons
 
 df.raw <- read_csv("Data/followup.csv")
-
-names(df.raw)
 
 df.raw %>% 
   rename(AttnCheck = "Debrief+attend") %>% 
@@ -36,17 +36,14 @@ names(df.raw)
 ```
 
 
-
-# Wrangle
-
+# Rename
 
 ```{r}
-
 df.raw <- df.raw %>% 
   rename(
     #=======Agency=========#
     #agency actual
-    "A.actual_1:anti1" = A.actual_1a, #cseparate prosocial responses from antisocial 
+    "A.actual_1:anti1" = A.actual_1a, #separate pro-social responses from antisocial 
     "A.actual_1:anti2" = A.actual_1b,
     "A.actual_1:anti3" = A.actual_1c,
     "A.actual_1:anti4" = A.actual_1d,
@@ -80,7 +77,7 @@ df.raw <- df.raw %>%
     "A.actual_3:pro5" = A.actual_3j,
     
     #Agency Deserve
-    "A.deserve_1:anti1" = A.deserve_1a, #cseparate prosocial responses from antisocial 
+    "A.deserve_1:anti1" = A.deserve_1a, 
     "A.deserve_1:anti2" = A.deserve_1b,
     "A.deserve_1:anti3" = A.deserve_1c,
     "A.deserve_1:anti4" = A.deserve_1d,
@@ -113,9 +110,8 @@ df.raw <- df.raw %>%
     "A.deserve_3:pro4" = A.deserve_3i,
     "A.deserve_3:pro5" = A.deserve_3j,
     
-    
-    #====NonAgency =======#
-    #Non agency actual
+    #====Non-Agency =======#
+    #Non-agency actual
     "NA.actual_1:anti1" = NA.actual_1a, 
     "NA.actual_1:anti2" = NA.actual_1b,
     "NA.actual_1:anti3" = NA.actual_1c,
@@ -183,7 +179,16 @@ df.raw <- df.raw %>%
     "NA.deserve_3:pro4" = NA.deserve_3i,
     "NA.deserve_3:pro5" = NA.deserve_3j,
     
-    #Reasons
+    #=====Reasons========#
+    #Agency
+    "A.RsnAnti_1" = A.actualRsnAnti_1,
+    "A.RsnPro_1" = A.actualRsnPro_1,
+    "A.RsnAnti_2" = A.actualRsnAnti_2,
+    "A.RsnPro_2" = A.actualRsnPro_2,
+    "A.RsnAnti_3" = A.actualRsnAnti_3,
+    "A.RsnPro_3" = A.actualRsnAnti_3_1,
+    
+    #Non-agency
     "NA.RsnAnti_1" = NA.reasons_1anti,   
     "NA.RsnPro_1" = NA.reasons_1pro,  
     "NA.RsnAnti_2" = NA.reasons_2anti,  
@@ -191,21 +196,24 @@ df.raw <- df.raw %>%
     "NA.RsnAnti_3" = NA.reasons_3anti,  
     "NA.RsnPro_3" = NA.reasons_3pro,  
   )
+
 ```
 
+# Wrangle
+- Exclusions + Calculate Likert averages
+- NB: Todo manipulation exclusions i.e. exclude those who failed to respond with correct company policy
 
 ```{r}
-
 df.wrangled <- df.raw %>% 
   slice(-1, -2) %>% 
   rename(AttnCheck = "Debrief+attend") %>% 
   dplyr::filter(Status==0) %>% #remove survey previews
   dplyr::filter(Finished==1) %>% #remove unfinished responses
   filter(!is.na(Agency2)|!is.na(NonA2)) %>% #goes to 235 (10 filtered out)
-  filter(AttnCheck==5) %>% #remove failred attn checks
+  filter(AttnCheck==5) %>% #remove failed attn checks
   retype() %>% 
   mutate(condition = ifelse(is.na(Agency2), "Compliance", "Agency")) %>% 
-  mutate(actual_vign1.anti = ifelse(condition == "Agency",
+  mutate(actual_vign1.anti = ifelse(condition == "Agency", #calculate Likert scale averages
                                rowMeans(select(., starts_with("A.actual_1:anti")), na.rm = TRUE), #rowMeans > rowwise
                                rowMeans(select(., starts_with("NA.actual_1:anti")), na.rm = TRUE)),
          actual_vign1.pro = ifelse(condition == "Agency",
@@ -247,6 +255,7 @@ df.wrangled <- df.raw %>%
                                 rowMeans(select(., starts_with("A.deserve_3:pro")), na.rm = TRUE),
                                 rowMeans(select(., starts_with("NA.deserve_3:pro")), na.rm = TRUE)))
 
+#make long for plotting
 df.long <- df.wrangled %>% 
   select(ResponseId, condition, starts_with("actual_vign"), starts_with("deserve_vign")) %>% 
   pivot_longer(cols = -c(ResponseId, condition),
@@ -255,7 +264,8 @@ df.long <- df.wrangled %>%
   separate(names, c("group", "vignette"), sep = "_") %>% 
   separate(vignette, c("vignette", "type")) 
 
-df.plot <- df.long %>% 
+#bar plot of mean Likert scores
+df.long %>% 
   group_by(condition, group, vignette, type) %>%
   summarize(mean = mean(behaviors, na.rm = TRUE))  %>% 
   filter(group == "actual") %>% 
@@ -263,6 +273,7 @@ df.plot <- df.long %>%
   geom_bar(stat = "identity", position = position_dodge()) +
   facet_wrap(~condition)
 
+#scatter-plot
 df.long %>% 
   filter(group == "actual") %>% 
   ggplot(aes(x = vignette, y = behaviors, group = type, color = type)) +
@@ -270,6 +281,7 @@ df.long %>%
                geom = "point") +
   facet_wrap(~condition)
 
+#barplot with vignettes averaged out
 df.long %>% 
   filter(group == "actual") %>% 
   ggplot(aes(x = type, y = behaviors, fill = type)) +
@@ -280,34 +292,82 @@ df.long %>%
 
 ```
 
+# Confirmatory analysis 
+
+Anova
 
 ```{r}
-df.long
+#============Anti===============#
+df.anti = df.long %>% 
+  filter(type == "anti") %>% 
+  filter(group == "actual")
+
+fit.anti = aov_ez(id = "ResponseId",
+       dv = "behaviors",
+       data = df.anti,
+       between = "condition",
+       within = "vignette")
+fit.anti$Anova #condition insign, vignette sign, interaction insign
+
+#Lmer() = is same as aov_ez() 
+mixed.anova.anti = lmer(behaviors ~ condition + vignette + condition*vignette + 
+                       (1|ResponseId), 
+                     data = df.anti) 
+anova(mixed.anova.anti) 
+
+#pairwise comparisons 
+mixed.anova.anti %>% 
+  emmeans(pairwise ~ condition + vignette,
+          adjust = "bonferroni") %>% 
+  pluck("contrasts")
+
+#check model
+mixed.anova.anti %>% 
+  check_model() 
 
 
-fit.compact <- lm(behaviors ~ 1, data = df.long)
-fit.augmented <- lmer(behaviors ~ condition*type + (1|ResponseId) + (1 + vignette|ResponseId), data = df.long)
-#anova(fit.compact, fit.augmented)
+#============Pro==============#
+df.pro = df.long %>% 
+  filter(type == "pro") %>% 
+  filter(group == "actual")
 
-#summary(fit.augmented)
+fit.pro = aov_ez(id = "ResponseId",
+       dv = "behaviors",
+       data = df.pro,
+       between = "condition",
+       within = "vignette")
+fit.pro$Anova 
 
-#check_model(fit.augmented)
-  
+#Lmer() = is same as aov_ez() 
+mixed.anova.pro = lmer(behaviors ~ condition + vignette + condition*vignette + 
+                       (1|ResponseId), 
+                     data = df.anti) 
+anova(mixed.anova.pro) 
+
+#pairwise comparisons 
+mixed.anova.pro %>% 
+  emmeans(pairwise ~ condition + vignette,
+          adjust = "bonferroni") %>% 
+  pluck("contrasts")
+
+#check model
+mixed.anova.pro %>% 
+  check_model() 
+
 ```
 
-Reasons
+
+# Reasons
 
 ```{r}
-names(df.wrangled)
-
-#agency reasons
+# Agency reasons
 #Anti
 df.wrangled %>% 
   filter(!is.na(Agency2)) %>% 
   select(starts_with("A.actual")) %>% #122
   na.omit() %>% 
   #select(starts_with("A.deserve")) #122
-  select(starts_with("A.actualRsnAnti")) %>% 
+  select(starts_with("A.RsnAnti")) %>% 
   na.omit()
 
 #Pro
@@ -316,7 +376,7 @@ df.wrangled %>%
   select(starts_with("A.actual")) %>% #122
   na.omit() %>% 
   #select(starts_with("A.deserve")) #122
-  select(starts_with("A.actualRsnPro")) %>% 
+  select(starts_with("A.RsnPro")) %>% 
   na.omit()
 
   
@@ -340,14 +400,7 @@ df.wrangled %>%
   na.omit()
   
 
-
 ```
 
-Likert averages
-We have to somehow tie likert averages to the reasons. So we know what responses someone's reasons are referring to
 
-```{r}
-names(df.wrangled)
-
-```
 
